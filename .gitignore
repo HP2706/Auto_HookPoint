@@ -3,4 +3,5 @@
 *.pth
 *.pickle
 *.pkl
-
+pixel
+test.ipynb
