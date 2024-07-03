@@ -1,13 +1,13 @@
-from typing import List
 from torch import nn
+import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import List, TypeVar
+
 def print_hooks(x, hook=None, hook_name=None):
     print(f"NAME {hook_name} shape: {x.shape} x: {x}")
     return x
 
 T = TypeVar("T")
-
 def flatten_dict(d: dict[str, T], prefix: str = "") -> dict[str, T]:
     result = {}
     for k, v in d.items():
@@ -27,6 +27,12 @@ class WrappedModule(nn.Module):
 
     def __repr__(self):
         return f"WrappedModule({self._original_forward.__self__.__class__.__name__})"
+
+    def unwrap(self) -> nn.Module:
+        unwrapped_module = self._original_forward.__self__
+        print("hook_point in self.__dict__", "hook_point" in self.__dict__)
+        unwrapped_module.__dict__.update(self.__dict__)
+        return unwrapped_module
 
     def forward(self, *args, **kwargs):
         return self.hook_point(self._original_forward(*args, **kwargs))
@@ -50,10 +56,7 @@ class AutoHookedRootModule(HookedRootModule):
         super().setup()
         self.is_initialized = True
 
-    def _initialize_and_wrap_hooks(
-        self, 
-        filter: List[str] = [], 
-    ):
+    def _initialize_and_wrap_hooks(self, filter: List[str] = []):
         change_dict = {}
         for name, module in list(self.named_children()):
             if isinstance(module, HookPoint) and not hasattr(self, f"hook_{name}"):
@@ -66,18 +69,11 @@ class AutoHookedRootModule(HookedRootModule):
                 hook_name = f"hook_{name}"
                 wrapped_module = self._wrap_module(module, hook_name)
                 change_dict[name] = wrapped_module
-                setattr(self, name, wrapped_module)
-
-                if isinstance(module, AutoHookedRootModule):
-                    
-                    # Preserve hooks of inner AutoHookedRootModule
-                    wrapped_module.module = self.hook_forward(module, hook_name)
+                self.hook_dict[hook_name] = wrapped_module.hook_point  # Add this line
 
         # Apply changes after iteration
         for name, value in change_dict.items():
-            if name not in self.__dict__:
-                setattr(self, name, value)
-
+            setattr(self, name, value)
 
     def state_dict(self, *args, **kwargs):
         # Override state_dict to avoid recursion
@@ -87,16 +83,24 @@ class AutoHookedRootModule(HookedRootModule):
     def unwrap_module(self, module: WrappedModule) -> nn.Module:
         for attr, value in module.__dict__.items():
             if isinstance(value, WrappedModule):
-                self.unwrap_module(value)
+                value = value.unwrap()
             elif isinstance(value, HookPoint):
                 pass
             else:
                 setattr(module, attr, value)
     
     def unwrap_model(self):
-        for name, module in self.named_children():
+        '''unwraps model and removes hook_point'''
+        for name, module in list(self.named_children()):  # Use list() to avoid RuntimeError
             if isinstance(module, WrappedModule):
-                self.unwrap_module(module)
+                print(f"Unwrapping {name}, module: {module}")
+                unwrapped = module.unwrap()
+                setattr(self, name, unwrapped)
+                if isinstance(unwrapped, AutoHookedRootModule):
+                    unwrapped.unwrap_model()  # Recursively unwrap nested AutoHookedRootModules
+
+            if hasattr(unwrapped, 'hook_point'):
+                delattr(unwrapped, 'hook_point')
 
     def list_all_hooks(self):
         return self.hook_dict.items()
@@ -115,4 +119,3 @@ class AutoHookedRootModule(HookedRootModule):
 
         module.forward = wrapped_forward
         return module
-    
