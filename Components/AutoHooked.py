@@ -1,7 +1,7 @@
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
-from typing import List, TypeVar
+from typing import List, TypeVar, Type
 
 def print_hooks(x, hook=None, hook_name=None):
     print(f"NAME {hook_name} shape: {x.shape} x: {x}")
@@ -59,7 +59,8 @@ class AutoHookedRootModule(HookedRootModule):
     def _initialize_and_wrap_hooks(self, filter: List[str] = []):
         change_dict = {}
         for name, module in list(self.named_children()):
-            if isinstance(module, HookPoint) and not hasattr(self, f"hook_{name}"):
+
+            if not isinstance(module, HookPoint) and 'hook' in name:
                 raise ValueError(f"HookPoint {name} is not hooked but should be. Don't use hook_{name} as name if not with HookPoint")
 
             if name in filter or isinstance(module, HookPoint):
@@ -119,3 +120,27 @@ class AutoHookedRootModule(HookedRootModule):
 
         module.forward = wrapped_forward
         return module
+    
+
+T = TypeVar('T', bound=nn.Module)
+
+def auto_hooked(cls : Type[T]) -> Type[T]:
+    class Wrapped(AutoHookedRootModule):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.model = cls(*args, **kwargs)
+            for attr_name in dir(self.model):
+                if not attr_name.startswith('__'):
+                    attr_value = getattr(self.model, attr_name)
+                    if not hasattr(self, attr_name):
+                        setattr(self, attr_name, attr_value)
+            
+            # Remove the model attribute to avoid duplication
+            del self.model
+            self.setup()
+
+        def forward(self, *args, **kwargs):
+            return cls.forward(self, *args, **kwargs)
+        
+    return Wrapped
+
