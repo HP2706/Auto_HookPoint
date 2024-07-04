@@ -3,7 +3,9 @@ from inspect import isclass
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
-from typing import List, Optional, TypeVar, Type, Union, cast, overload
+from typing import List, Optional, OrderedDict, TypeVar, Type, Union, cast, overload
+
+from utils import iterate_module
 
 def print_hooks(x, hook=None, hook_name=None):
     print(f"NAME {hook_name} shape: {x.shape} x: {x}")
@@ -20,7 +22,8 @@ def flatten_dict(d: dict[str, T], prefix: str = "") -> dict[str, T]:
             result[new_key] = v
     return result
 
-class WrappedModule(nn.Module):
+
+class BaseWrappedModule(nn.Module):
     def __init__(self, module, hook_point):
         super().__init__()
         self.__dict__.update(module.__dict__)
@@ -79,7 +82,10 @@ class AutoHookedRootModule(HookedRootModule):
                         "setup() must be explicitly called in the",
                         f"__init__ method of {cls.__name__} when auto_setup is False"
                     )
-
+            print('listing hooks in init')
+            print(self.list_all_hooks())
+            print(f'{cls.__name__}.hook_dict', self.hook_dict)
+            #print(f'{cls.__name__}.mod_dict', self.mod_dict)
         cls.__init__ = new_init
 
     def __repr__(self):
@@ -87,18 +93,21 @@ class AutoHookedRootModule(HookedRootModule):
 
     def setup(self, filter: List[str] = []):
         self._initialize_and_wrap_hooks(filter=filter)
+        print("calling setup\n\n")
         super().setup()
         self._setup_called = True
 
     def _initialize_and_wrap_hooks(self, filter: List[str] = [], prefix: str = ""):
         change_dict = {}
         children = list(self.named_children())
+        assert len(children) > 0, f"No children found for {self.__class__.__name__}"
+
         for name, module in children:
             full_name = f"{prefix}.{name}" if prefix else name
-            
+
             if not isinstance(module, HookPoint) and 'hook' in name:
                 raise ValueError(f"HookPoint {full_name} is not hooked but should be. Don't use hook_{name} as name if not with HookPoint")
-
+            
             if full_name in filter or isinstance(module, HookPoint):
                 continue
 
@@ -191,8 +200,11 @@ def auto_hooked(
 ) -> Union[Type[T], T]:
     if not isclass(cls_or_instance):
         if isinstance(cls_or_instance, (nn.ModuleList, nn.ModuleDict, nn.Sequential)):
-            for idx, item in enumerate(cls_or_instance):
-                cls_or_instance[idx] = auto_hooked(item)
+            for idx, item in iterate_module(cls_or_instance):
+                if isinstance(cls_or_instance, nn.ModuleDict):
+                    cls_or_instance[str(idx)] = auto_hooked(item)
+                else:
+                    cls_or_instance[int(idx)] = auto_hooked(item)
             return cls_or_instance
         elif isinstance(cls_or_instance, nn.Module):
             return cast(T, _wrap_instance(cls_or_instance))
@@ -219,32 +231,97 @@ def _wrap_instance(instance: nn.Module) -> nn.Module:
 
         def forward(self, *args, **kwargs):
             return type(instance).forward(self, *args, **kwargs)
-
-    wrapped = WrappedModule()
-    return wrapped
+    
+    return WrappedModule()
 
 
 def _wrap_class(cls: Type[T]) -> Type[AutoHookedRootModule]:
-    class Wrapped(AutoHookedRootModule):
+    class WrappedModule(AutoHookedRootModule):
         def __init__(self, *args, **kwargs):
             super().__init__()
-            assert getattr(self, 'COPY', None) is None, "COPY attribute already exists"
-            self.COPY = cls(*args, **kwargs)
+            object.__setattr__(self, 'BASE_CLASS', cls(*args, **kwargs))
             
-            for attr_name in dir(self.COPY):
-                #filter out special attributes
-                if not attr_name.startswith('__'): 
-                    attr_value = getattr(self.COPY, attr_name)
-                    if isinstance(attr_value, nn.Module):
-                        wrapped_attr = auto_hooked(attr_value)
-                        setattr(self, attr_name, wrapped_attr)
-                    elif not hasattr(self, attr_name):
-                        setattr(self, attr_name, attr_value)
-            
-            del self.COPY
+            # Wrap all nn.Module attributes of BASE_CLASS
+            self._wrap_modules(self.BASE_CLASS._modules)
+            print('listing modules in BASE_CLASS INIT')
+            print(self.BASE_CLASS._modules)
+            print('listing self.named_children')
+            print(self.named_children())
             self.setup()
 
+        def _wrap_modules(self, modules):
+            for attr_name, attr_value in modules.items():
+                if isinstance(attr_value, HookPoint):
+                    continue
+                if isinstance(attr_value, nn.Module):
+                    wrapped_cls = auto_hooked(attr_value)
+                    modules[attr_name] = wrapped_cls
+                    if hasattr(wrapped_cls, '_modules'):
+                        self._wrap_modules(wrapped_cls._modules)
+
+                    self.hook_dict[f"hook_{attr_name}"] = HookPoint()
+
         def forward(self, *args, **kwargs):
-            return cls.forward(self, *args, **kwargs)
+            # Use the hook_point of the Wrapped class
+            return self.BASE_CLASS.forward(*args, **kwargs)
+
+        def __getattr__(self, name):
+            if name == 'BASE_CLASS':
+                return super().__getattribute__(name)
+            return getattr(self.BASE_CLASS, name)
+        
+        def __setattr__(self, name, value):
+            if name == 'BASE_CLASS' or not hasattr(self, 'BASE_CLASS'):
+                super().__setattr__(name, value)
+            else:
+                setattr(self.BASE_CLASS, name, value)
+
+        def __repr__(self):
+            return f"Wrapped({self.BASE_CLASS.__class__.__name__})"
+        
+        def __str__(self):
+            return f"Wrapped({self.BASE_CLASS.__class__.__name__})"
+        
+    return WrappedModule
+        
+
+""" 
+def _wrap_class(cls: Type[T]) -> Type[AutoHookedRootModule]:
+    # Get the source code of the class
+    source = inspect.getsource(cls)
     
-    return Wrapped
+    # Parse the source code into an AST
+    tree = ast.parse(textwrap.dedent(source))
+    
+    # Create an AST transformer
+    class ModuleWrapper(ast.NodeTransformer):
+        def visit_Call(self, node):
+            if isinstance(node.func, ast.Name) and node.func.id in ['nn.Module', 'nn.Linear', 'nn.Conv2d']:  # Add more nn modules as needed
+                return ast.Call(
+                    func=ast.Name(id='auto_hooked', ctx=ast.Load()),
+                    args=[node],
+                    keywords=[]
+                )
+            return node
+
+    # Apply the transformer
+    new_tree = ModuleWrapper().visit(tree)
+    
+    # Compile the modified AST
+    compiled = compile(new_tree, '<string>', 'exec')
+    
+    # Create a new namespace and execute the compiled code
+    namespace = {}
+    exec(compiled, namespace)
+    
+    # Get the modified class from the namespace
+    ModifiedClass = namespace[cls.__name__]
+    
+    # Create the wrapped class
+    class Wrapped(AutoHookedRootModule, ModifiedClass):
+        def __init__(self, *args, **kwargs):
+            AutoHookedRootModule.__init__(self)
+            ModifiedClass.__init__(self, *args, **kwargs)
+            self.setup()
+
+    return Wrapped """

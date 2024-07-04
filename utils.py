@@ -1,6 +1,16 @@
+from typing import Iterable, Tuple, Union
 import warnings
 from torch import nn
 import inspect
+
+def iterate_module(
+    module : Union[nn.ModuleList, nn.Sequential, nn.ModuleDict]
+) -> Iterable[Union[Tuple[str, nn.Module], Tuple[int, nn.Module]]]:
+    if isinstance(module, (nn.ModuleList, nn.Sequential)):
+        return enumerate(module)
+    elif isinstance(module, nn.ModuleDict):
+        return module.items()
+   
 
 
 def has_implemented_forward(module : nn.Module):
@@ -24,7 +34,7 @@ def has_implemented_forward(module : nn.Module):
             f"Module {module} has forward method but"
             f"it is not implemented and is not a container module"
         )
-        
+
     return value
 
 def generate_expected_hookpoints(model : nn.Module, prefix=''):
@@ -37,12 +47,7 @@ def generate_expected_hookpoints(model : nn.Module, prefix=''):
             expected_hooks.append(f"{full_name}.hook_point")          
 
         if isinstance(module, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
-            for key, child in (
-                enumerate(module) 
-                if isinstance(module, (nn.ModuleList, nn.Sequential)) 
-                else module.items()
-            ):
-                print(f"child {child} with name : {key}")
+            for key, child in iterate_module(module):
                 expected_hooks.extend(generate_expected_hookpoints(child, f"{full_name}.{key}"))
 
         expected_hooks.extend(generate_expected_hookpoints(module, full_name))

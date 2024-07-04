@@ -12,14 +12,15 @@ from functools import partial
 def check_hook_types(hook_list : List[Tuple[str, str]]):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
-
 def generic_check_hook_fn_works(model):
     counter = {'value': 0} #GLOBAL state
     def print_shape(x, hook=None, hook_name=None):
+        print(f"HOOK NAME: {hook_name}")
         counter['value'] += 1
         return x
 
     hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    print(f"HOOK NAMES: {hook_names}")
     model.run_with_hooks(
         x=torch.randn(1, 10),
         fwd_hooks=[(hook_name, partial(print_shape, hook_name=hook_name)) for hook_name in hook_names]
@@ -44,7 +45,17 @@ def generic_check_all_hooks(model):
             f"Expected hookpoints: {expected_hookpoints} \n\n"
             f"Actual hookpoints: {actual_hookpoints} \n\n"
         )
+    print("TEST PASSED")
 
+class SimpleModelWithModuleDict(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.bla = nn.ModuleDict({"0": nn.Linear(10, 10), "1": nn.Linear(10, 10)})
+
+    def forward(self, x):
+        x = self.bla["0"](x)
+        x = self.bla["1"](x)
+        return x
 
 class SimpleModule(nn.Module):
     def __init__(self):
@@ -79,9 +90,11 @@ class ComplexNestedModule(nn.Module):
 # Test cases
 @pytest.mark.parametrize("module_class", [
     SimpleModule ,
+    SimpleModelWithModuleDict,
     #SimpleNestedModuleList,
     #ComplexNestedModule,
     SimpleModule(),
+    SimpleModelWithModuleDict()
     #SimpleNestedModuleList(),
     #ComplexNestedModule(),
 ])
@@ -96,9 +109,11 @@ def test_hook_fn_works(module_class):
 
 @pytest.mark.parametrize("module_class", [
     SimpleModule,
+    SimpleModelWithModuleDict,
     #SimpleNestedModuleList,
     #ComplexNestedModule,
     SimpleModule(),
+    SimpleModelWithModuleDict
     #SimpleNestedModuleList(),
     #ComplexNestedModule(),
 ])
