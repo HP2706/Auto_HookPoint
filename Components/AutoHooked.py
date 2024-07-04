@@ -88,27 +88,6 @@ class AutoHookedRootModule(HookedRootModule):
             if full_name in filter or isinstance(module, HookPoint):
                 continue
 
-            if isinstance(module, WrappedModule):
-                print(f"Skipping {full_name} because it is a WrappedModule")
-                continue
-            
-            if isinstance(module, (nn.ModuleList, nn.ModuleDict, nn.Sequential)):
-                wrapped_container = type(module)()
-
-                for key, item in (module.items() if isinstance(module, nn.ModuleDict) else enumerate(module)):
-                    hook_name = f"hook_{full_name}_{key}"
-                    wrapped_item = self._wrap_module(item, hook_name)
-                    if isinstance(module, nn.ModuleDict):
-                        wrapped_container[key] = wrapped_item
-                    else:
-                        wrapped_container.append(wrapped_item)
-                    self.hook_dict[hook_name] = wrapped_item.hook_point
-                    
-                    # Recursively wrap nested modules
-                    if isinstance(item, nn.Module):
-                        wrapped_item._initialize_and_wrap_hooks(filter, f"{full_name}_{key}")
-                
-                change_dict[name] = wrapped_container
             elif isinstance(module, nn.Module):
                 hook_name = f"hook_{full_name}"
                 wrapped_module = self._wrap_module(module, hook_name)
@@ -116,10 +95,11 @@ class AutoHookedRootModule(HookedRootModule):
                 self.hook_dict[hook_name] = wrapped_module.hook_point
                 
                 # Recursively wrap nested modules
-                if isinstance(module, AutoHookedRootModule):
-                    wrapped_module._initialize_and_wrap_hooks(filter, full_name)
-
-        # Apply changes after iteration
+                if isinstance(module, (AutoHookedRootModule, WrappedModule)):
+                    if hasattr(module, '_initialize_and_wrap_hooks'):
+                        module._initialize_and_wrap_hooks(filter, full_name)
+            
+            # Apply changes after iteration
             for name, value in change_dict.items():
                 setattr(self, name, value)
 
@@ -180,9 +160,20 @@ def auto_hooked(cls: Type[T]) -> Type[T]:
                 if not attr_name.startswith('__'):
                     attr_value = getattr(self.model, attr_name)
                     if isinstance(attr_value, nn.Module):
-                        # Wrap nested nn.Modules with AutoHookedRootModule
-                        wrapped_attr = auto_hooked_with_args(type(attr_value), attr_value)
-                        setattr(self, attr_name, wrapped_attr)
+                        if type(attr_value) in [nn.ModuleList, nn.ModuleDict, nn.Sequential]:
+                            print(f"wrapping {attr_name} with {type(attr_value)}")
+                            for key, item in attr_value.items() if isinstance(attr_value, nn.ModuleDict) else enumerate(attr_value):
+                                if isinstance(key, int):
+                                    key = f"{type(item).__name__}_{key}"
+                                
+                                print(f"wrapping {key}")
+                                wrapped_attr = auto_hooked_with_args(type(item), item)
+                                print(f"wrapped {key}")
+                                setattr(self, f"{attr_name}_{key}", wrapped_attr)
+                        else:   
+                            # Wrap nested nn.Modules with AutoHookedRootModule
+                            wrapped_attr = auto_hooked_with_args(type(attr_value), attr_value)
+                            setattr(self, attr_name, wrapped_attr)
                     elif not hasattr(self, attr_name):
                         #print(f"not nn.Module {attr_name} to {attr_value}")
                         setattr(self, attr_name, attr_value)
@@ -197,7 +188,8 @@ def auto_hooked(cls: Type[T]) -> Type[T]:
     return Wrapped
 
 def auto_hooked_with_args(cls: Type[nn.Module], instance: nn.Module) -> nn.Module:
-    class WrappedWithArgs(AutoHookedRootModule):
+    print(f"auto_hooked_with_args called with cls: {cls} and instance: {instance}")
+    class WrappedModule(AutoHookedRootModule):
         def __init__(self):
             super().__init__()
             # Copy all attributes from the original instance
@@ -209,4 +201,4 @@ def auto_hooked_with_args(cls: Type[nn.Module], instance: nn.Module) -> nn.Modul
         def forward(self, *args, **kwargs):
             return cls.forward(self, *args, **kwargs)
 
-    return WrappedWithArgs()
+    return WrappedModule()
