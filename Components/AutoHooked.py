@@ -80,7 +80,6 @@ class AutoHookedRootModule(HookedRootModule):
 
         cls.__init__ = new_init
 
-
     def __repr__(self):
         return f"{self.__class__.__name__}()"
 
@@ -130,12 +129,9 @@ class AutoHookedRootModule(HookedRootModule):
         for name, value in change_dict.items():
             setattr(self, name, value)
 
-
     def state_dict(self, *args, **kwargs):
         # Override state_dict to avoid recursion
         return nn.Module.state_dict(self, *args, **kwargs)
-
-
 
     def unwrap_module(self, module: WrappedModule) -> nn.Module:
         for attr, value in module.__dict__.items():
