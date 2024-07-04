@@ -1,7 +1,9 @@
+from __future__ import annotations
+from inspect import isclass
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
-from typing import List, Optional, TypeVar, Type, Union
+from typing import List, Optional, TypeVar, Type, Union, cast, overload
 
 def print_hooks(x, hook=None, hook_name=None):
     print(f"NAME {hook_name} shape: {x.shape} x: {x}")
@@ -137,10 +139,12 @@ class AutoHookedRootModule(HookedRootModule):
         for attr, value in module.__dict__.items():
             if isinstance(value, WrappedModule):
                 value = value.unwrap()
+                setattr(module, attr, value)
             elif isinstance(value, HookPoint):
                 pass
             else:
                 setattr(module, attr, value)
+        return module
     
     def unwrap_model(self):
         '''unwraps model and removes hook_point'''
@@ -151,8 +155,8 @@ class AutoHookedRootModule(HookedRootModule):
                 if isinstance(unwrapped, AutoHookedRootModule):
                     unwrapped.unwrap_model()  # Recursively unwrap nested AutoHookedRootModules
 
-            if hasattr(unwrapped, 'hook_point'):
-                delattr(unwrapped, 'hook_point')
+                if hasattr(unwrapped, 'hook_point'):
+                    delattr(unwrapped, 'hook_point')
 
     def list_all_hooks(self):
         return self.hook_dict.items()
@@ -175,26 +179,32 @@ class AutoHookedRootModule(HookedRootModule):
         module.forward = wrapped_forward
         return module
     
-T = TypeVar('T', bound=nn.Module)
 
+@overload
+def auto_hooked(cls_or_instance: Type[T]) -> Type[T]: ...
 
-def auto_hooked(cls_or_instance: Union[Type[T], T]) -> Union[Type[T], T]:    
+@overload
+def auto_hooked(cls_or_instance: T) -> T: ...
 
-    if isinstance(cls_or_instance, nn.Module):
-        # Handle instance
+def auto_hooked(
+    cls_or_instance: Union[Type[T], T]
+) -> Union[Type[T], T]:
+    if not isclass(cls_or_instance):
         if isinstance(cls_or_instance, (nn.ModuleList, nn.ModuleDict, nn.Sequential)):
             for idx, item in enumerate(cls_or_instance):
                 cls_or_instance[idx] = auto_hooked(item)
             return cls_or_instance
+        elif isinstance(cls_or_instance, nn.Module):
+            return cast(T, _wrap_instance(cls_or_instance))
         else:
-            return _wrap_instance(cls_or_instance)
-    
-    elif issubclass(cls_or_instance, AutoHookedRootModule):
-        # Already an AutoHookedRootModule, return as is
-        return cls_or_instance
+            raise ValueError("auto_hooked expects a class or instance, got: {}".format(cls_or_instance))
     else:
-        # Handle class
-        return _wrap_class(cls_or_instance)
+        if issubclass(cls_or_instance, AutoHookedRootModule):
+            # Already an AutoHookedRootModule, return as is
+            return cast(Type[T], cls_or_instance)
+        else:
+            # Handle class
+            return cast(Type[T], _wrap_class(cls_or_instance))
 
 def _wrap_instance(instance: nn.Module) -> nn.Module:
     class WrappedModule(AutoHookedRootModule):
@@ -213,7 +223,8 @@ def _wrap_instance(instance: nn.Module) -> nn.Module:
     wrapped = WrappedModule()
     return wrapped
 
-def _wrap_class(cls: Type[T]) -> Type[T]:
+
+def _wrap_class(cls: Type[T]) -> Type[AutoHookedRootModule]:
     class Wrapped(AutoHookedRootModule):
         def __init__(self, *args, **kwargs):
             super().__init__()

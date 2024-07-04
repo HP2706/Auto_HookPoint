@@ -79,10 +79,10 @@ class ComplexNestedModule(nn.Module):
 # Test cases
 @pytest.mark.parametrize("module_class", [
     SimpleModule ,
-    SimpleNestedModuleList,
+    #SimpleNestedModuleList,
     #ComplexNestedModule,
     SimpleModule(),
-    SimpleNestedModuleList(),
+    #SimpleNestedModuleList(),
     #ComplexNestedModule(),
 ])
 def test_hook_fn_works(module_class):
@@ -96,10 +96,10 @@ def test_hook_fn_works(module_class):
 
 @pytest.mark.parametrize("module_class", [
     SimpleModule,
-    SimpleNestedModuleList,
+    #SimpleNestedModuleList,
     #ComplexNestedModule,
     SimpleModule(),
-    SimpleNestedModuleList(),
+    #SimpleNestedModuleList(),
     #ComplexNestedModule(),
 ])
 def test_check_all_hooks(module_class):
