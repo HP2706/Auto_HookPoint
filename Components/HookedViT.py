@@ -21,18 +21,32 @@ But somewhat modified to support hooking into the model and type hints
 
 import logging
 import math
-from typing import Optional
+from typing import Optional, Type
 import torch
 from torch import nn
 from transformers import ViTPreTrainedModel
 from transformers.modeling_outputs import BaseModelOutput, BaseModelOutputWithPooling
 from transformers.modeling_utils import find_pruneable_heads_and_indices, prune_linear_layer
-from transformers.models.vit.modeling_vit import PatchEmbeddings, ViTIntermediate, ViTOutput, ViTPooler, ViTSelfOutput
+from transformers.models.vit.modeling_vit import (
+    ViTPatchEmbeddings as _ViTPatchEmbeddings,
+    ViTIntermediate as _ViTIntermediate, 
+    ViTOutput as _ViTOutput, 
+    ViTPooler as _ViTPooler, 
+    ViTSelfOutput as _ViTSelfOutput, 
+    ViTConfig as _ViTConfig
+)
 
 from jaxtyping import Float, Int
 from transformer_lens.hook_points import HookPoint
-from Components.AutoHooked import AutoHookedRootModule
+from Components.AutoHooked import AutoHookedRootModule, auto_hooked
 from HookedPixelConfig import HookedPixelCfg
+
+
+ViTPatchEmbeddings = auto_hooked(_ViTPatchEmbeddings)
+ViTIntermediate = auto_hooked(_ViTIntermediate)
+ViTOutput = auto_hooked(_ViTOutput)
+ViTPooler = auto_hooked(_ViTPooler)
+ViTSelfOutput = auto_hooked(_ViTSelfOutput)
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +68,18 @@ class ViTSelfAttention(AutoHookedRootModule):
         self.key = nn.Linear(config.hidden_size, self.all_head_size, bias=config.qkv_bias)
         self.value = nn.Linear(config.hidden_size, self.all_head_size, bias=config.qkv_bias)
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        
+        # HOOKS. NOTE 'AutoHookedRootModule' will hook all nn.module.forward passes 
+        # so we only need to hook that does not involve an nn.Module
+        self.hook_attn_in = HookPoint()
+        self.hook_attn_scores = HookPoint()
+        self.hook_attn_probs = HookPoint()
+        
         self.setup() #registers hooks in 
 
     def transpose_for_scores(
         self, 
-        x : Float[torch.Tensor, 'batch pos d_model']
+        x : Float[torch.Tensor, 'batch pos d_model'],
     ) -> Float[torch.Tensor, 'batch pos n_heads d_head']:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
@@ -71,11 +92,11 @@ class ViTSelfAttention(AutoHookedRootModule):
         head_mask : Optional[Float[torch.Tensor, 'n_heads']] = None, 
         output_attentions : bool = False
     ) -> tuple[
-            Float[torch.Tensor, 'batch pos d_model'], 
-            Optional[Float[torch.Tensor, 'batch pos n_heads query_pos key_pos']]
-        ]:
+        Float[torch.Tensor, 'batch pos d_model'], 
+        Optional[Float[torch.Tensor, 'batch pos n_heads query_pos key_pos']]
+    ]:
+        print("hidden_states", hidden_states.shape)
         mixed_query_layer = self.hook_attn_in(self.query(hidden_states))
-
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
         query_layer = self.transpose_for_scores(mixed_query_layer)
@@ -86,6 +107,8 @@ class ViTSelfAttention(AutoHookedRootModule):
 
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in ViTModel forward() function)
+            print("attention_mask", attention_mask.shape)
+            print("attention_scores", attention_scores.shape)
             attention_scores = attention_scores + attention_mask
         self.hook_attn_scores(attention_scores)
         # Normalize the attention scores to probabilities.
@@ -110,12 +133,13 @@ class ViTSelfAttention(AutoHookedRootModule):
         return outputs
 
 
-class ViTAttention(nn.Module):
+class ViTAttention(AutoHookedRootModule):
     def __init__(self, config):
         super().__init__()
         self.attention = ViTSelfAttention(config)
         self.output = ViTSelfOutput(config)
         self.pruned_heads = set()
+        self.setup()
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -144,18 +168,22 @@ class ViTAttention(nn.Module):
         return outputs
 
 
-class ViTLayer(nn.Module):
+class ViTLayer(AutoHookedRootModule):
     """This corresponds to the Block class in the timm implementation."""
 
-    def __init__(self, config):
+    def __init__(
+        self, 
+        config : HookedPixelCfg
+    ):
+        assert isinstance(config, HookedPixelCfg), f"Expected config to be of type HookedPixelCfg, got {type(config)}"
         super().__init__()
-        self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
         self.attention = ViTAttention(config)
         self.intermediate = ViTIntermediate(config)
         self.output = ViTOutput(config)
         self.layernorm_before = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.layernorm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.setup()
 
     def forward(self, hidden_states, attention_mask=None, head_mask=None, output_attentions=False):
         self_attention_outputs = self.attention(
@@ -176,18 +204,20 @@ class ViTLayer(nn.Module):
 
         # second residual connection is done here
         layer_output = self.output(layer_output, hidden_states)
-
         outputs = (layer_output,) + outputs
-
         return outputs
 
-
-class ViTEncoder(nn.Module):
-    def __init__(self, config):
+class ViTEncoder(AutoHookedRootModule):
+    def __init__(
+        self, 
+        config : HookedPixelCfg
+    ):
+        assert isinstance(config, HookedPixelCfg), f"Expected config to be of type HookedPixelCfg, got {type(config)}"
         super().__init__()
         self.config = config
         self.layer = nn.ModuleList([ViTLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
+        self.setup()
 
     def forward(
         self,
@@ -238,26 +268,33 @@ class ViTEncoder(nn.Module):
         )
 
 
-class ViTEmbeddings(nn.Module):
+class ViTEmbeddings(AutoHookedRootModule):
     """
     Construct the CLS token, position and patch embeddings. Optionally, also the mask token.
     """
 
-    def __init__(self, config, use_mask_token=False):
+    def __init__(
+        self, 
+        config : HookedPixelCfg,
+        use_mask_token=False
+    ):
+        assert isinstance(config, HookedPixelCfg), f"Expected config to be of type HookedPixelCfg, got {type(config)}"
         super().__init__()
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
         self.mask_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size)) if use_mask_token else None
-        self.patch_embeddings = PatchEmbeddings(
-            image_size=config.image_size,
-            patch_size=config.patch_size,
-            num_channels=config.num_channels,
-            embed_dim=config.hidden_size,
-        )
+
+    
+        self.patch_embeddings = ViTPatchEmbeddings(config)
+        # This class turns `pixel_values` of shape `(batch_size, num_channels, height, width)` into the initial
+        # `hidden_states` (patch embeddings) of shape `(batch_size, seq_length, hidden_size)` to be consumed by a
+        # Transformer.
         self.num_patches = self.patch_embeddings.num_patches
         self.position_embeddings = nn.Parameter(torch.zeros(1, self.num_patches + 1, config.hidden_size))
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.config = config
+        self.setup()
+
 
     def interpolate_pos_encoding(self, embeddings, height, width):
         """
@@ -291,7 +328,7 @@ class ViTEmbeddings(nn.Module):
 
     def forward(self, pixel_values, attention_mask=None, bool_masked_pos=None, interpolate_pos_encoding=False):
         batch_size, num_channels, height, width = pixel_values.shape
-        embeddings = self.patch_embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+        embeddings = self.patch_embeddings.forward(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
 
         batch_size, seq_len, _ = embeddings.size()
         if bool_masked_pos is not None:
@@ -303,7 +340,7 @@ class ViTEmbeddings(nn.Module):
         # add the [CLS] token to the embedded patch tokens
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
         embeddings = torch.cat((cls_tokens, embeddings), dim=1)
-        attention_mask = torch.cat((torch.ones((batch_size, 1), device=attention_mask.device), attention_mask), dim=1)
+        #attention_mask = torch.cat((torch.ones((batch_size, 1), device=attention_mask.device), attention_mask), dim=1)
 
         # add positional encoding to each token
         if interpolate_pos_encoding:
@@ -316,9 +353,16 @@ class ViTEmbeddings(nn.Module):
         return embeddings, attention_mask
 
 
-class ViTModel(ViTPreTrainedModel):
-    def __init__(self, config, add_pooling_layer=True, use_mask_token=False):
-        super().__init__(config)
+class ViTModel(ViTPreTrainedModel, AutoHookedRootModule):
+    def __init__(
+        self, 
+        config : HookedPixelCfg,
+        add_pooling_layer=True, 
+        use_mask_token=False
+    ):
+        assert isinstance(config, HookedPixelCfg), f"Expected config to be of type HookedPixelCfg, got {type(config)}"
+        ViTPreTrainedModel.__init__(self, config.to_vit_config())
+        AutoHookedRootModule.__init__(self)
         self.config = config
 
         self.embeddings = ViTEmbeddings(config, use_mask_token=use_mask_token)
@@ -329,6 +373,7 @@ class ViTModel(ViTPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+        self.setup()
 
     def get_input_embeddings(self):
         return self.embeddings.patch_embeddings
@@ -367,10 +412,10 @@ class ViTModel(ViTPreTrainedModel):
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
-
         if attention_mask is None:
             attention_mask = torch.ones((pixel_values.shape[0], self.embeddings.num_patches), device=self.device)
 
+        print("attention_mask", attention_mask.shape)
         embedding_output, attention_mask = self.embeddings(
             pixel_values,
             attention_mask=attention_mask,

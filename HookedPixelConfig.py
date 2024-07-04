@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import pprint
+from pydantic import BaseModel, Field
+from transformers.models.vit.modeling_vit import ViTConfig
 
-@dataclass
-class HookedPixelCfg:
+class HookedPixelCfg(BaseModel):
     """
     Args:
         hidden_size (`int`, *optional*, defaults to 768):
@@ -46,7 +47,6 @@ class HookedPixelCfg:
         norm_pix_loss (`bool`, *optional*, defaults to `True`):
             Whether or not to train with normalized pixels (see Table 3 in the paper).
     """
-    model_type = "pixel"
     hidden_size : int = 768
     num_hidden_layers : int = 12
     num_attention_heads : int = 12
@@ -66,7 +66,22 @@ class HookedPixelCfg:
     decoder_num_hidden_layers : int = 8
     decoder_intermediate_size : int = 2048
     mask_ratio : float = 0.25
-    norm_pix_loss=True,
+    norm_pix_loss : bool = True
+    pruned_heads : Optional[Dict[int, List[int]]] = None
+    output_attentions : bool = False
+    output_hidden_states : bool = False
+    use_return_dict: bool = True
+
+    #added 
+    is_decoder: bool = False
+
+    def to_vit_config(self)->ViTConfig:
+        config_dict = self.model_dump()
+
+        config_dict.pop('use_return_dict', None)
+        config_dict.pop('is_decoder', None)
+        
+        return ViTConfig(**config_dict)
 
     #UTILITY methods taken from:
     #https://github.com/TransformerLensOrg/TransformerLens/blob/main/transformer_lens/HookedTransformerConfig.py#L24
