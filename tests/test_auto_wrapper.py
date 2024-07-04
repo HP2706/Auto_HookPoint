@@ -1,3 +1,4 @@
+from inspect import isclass
 from typing import List, Tuple
 from Components.AutoHooked import AutoHookedRootModule, WrappedModule, auto_hooked
 from transformer_lens.hook_points import HookPoint
@@ -5,20 +6,14 @@ from Models import BaseTransformerConfig, VanillaTransformerBlock
 from utils import generate_expected_hookpoints
 import torch.nn as nn
 import torch
+import pytest
 from functools import partial
-
-def get_hook_names(hook_list : List[Tuple[str, str]]):
-    return [tup[0] for tup in hook_list]
-
-def check_hook_names(hook_list : List[Tuple[str, str]], target_names : List[str]):
-    hook_names = get_hook_names(hook_list)
-    for name in target_names:
-        assert name in hook_names, f"{name} not in hook_names {hook_names}"
 
 def check_hook_types(hook_list : List[Tuple[str, str]]):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
-def basic_hook_test(model):
+
+def generic_check_hook_fn_works(model):
     counter = {'value': 0} #GLOBAL state
     def print_shape(x, hook=None, hook_name=None):
         counter['value'] += 1
@@ -32,11 +27,13 @@ def basic_hook_test(model):
     assert counter['value'] == len(hook_names), f"counter['value'] == len(hook_names), {counter['value']} == {len(hook_names)}"
     print("TEST PASSED")
 
-def check_all_hooks(model):
+def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)
 
     # Compare with actual hookpoints
-    actual_hookpoints = [name for name, _ in model.list_all_hooks()]
+    hook_list = model.list_all_hooks()
+    check_hook_types(hook_list)
+    actual_hookpoints = [name for name, _ in hook_list]
 
     # Find missing hookpoints
     missing_hookpoints = set(expected_hookpoints) - set(actual_hookpoints)
@@ -63,30 +60,10 @@ class SimpleNestedModuleList(nn.Module):
         self.bla = nn.ModuleList([SimpleModule(), SimpleModule()])
 
     def forward(self, x):
-        return self.bla(x)
-
-def test_basic_auto_hooked():
-    model = auto_hooked(SimpleModule)()
-    target_names = ['inner1.hook_point']
-    hook_list = model.list_all_hooks()
-    check_hook_names(hook_list, target_names)
-    check_hook_types(hook_list)
-
-""" def test_hooks_work_SimpleModule_auto_hooked_instance():
-    model = auto_hooked(SimpleModule())
-    basic_hook_test(model)
-
-def test_hooks_work_SimpleModule_auto_hooked_class():
-    model = auto_hooked(SimpleModule)()
-    basic_hook_test(model) """
-
-def test_SimpleNestedModuleList_auto_hooked():
-    model = auto_hooked(SimpleNestedModuleList)()
-    target_names = ['bla.0.hook_point', 'bla.1.hook_point', 'bla.0.inner1.hook_point', 'bla.1.inner1.hook_point']
-    hook_list = model.list_all_hooks()
-    check_hook_names(hook_list, target_names)
-    check_hook_types(hook_list)
-
+        for module in self.bla:
+            x = module(x)
+        return x
+    
 class ComplexNestedModule(nn.Module):
     def __init__(self):
         super().__init__()
@@ -98,9 +75,37 @@ class ComplexNestedModule(nn.Module):
         )
         self.bla = nn.ModuleList([VanillaTransformerBlock(cfg)])
 
-# Usage example
-def test_ComplexNestedModule_auto_hooked():
-    model = auto_hooked(ComplexNestedModule)()
-    check_all_hooks(model)
 
+# Test cases
+@pytest.mark.parametrize("module_class", [
+    SimpleModule ,
+    SimpleNestedModuleList,
+    #ComplexNestedModule,
+    SimpleModule(),
+    SimpleNestedModuleList(),
+    #ComplexNestedModule(),
+])
+def test_hook_fn_works(module_class):
+    if isclass(module_class):
+        print("IS CLASS")
+        model = auto_hooked(module_class)()
+    else:
+        print("IS INSTANCE")
+        model = auto_hooked(module_class)
+    generic_check_hook_fn_works(model)
+
+@pytest.mark.parametrize("module_class", [
+    SimpleModule,
+    SimpleNestedModuleList,
+    #ComplexNestedModule,
+    SimpleModule(),
+    SimpleNestedModuleList(),
+    #ComplexNestedModule(),
+])
+def test_check_all_hooks(module_class):
+    if isclass(module_class):
+        model = auto_hooked(module_class)()
+    else:
+        model = auto_hooked(module_class)
+    generic_check_all_hooks(model)
 
