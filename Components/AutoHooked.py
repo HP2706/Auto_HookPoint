@@ -3,9 +3,7 @@ from inspect import isclass
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
-from typing import List, Optional, OrderedDict, TypeVar, Type, Union, cast, overload
-
-from utils import iterate_module
+from typing import List, Optional, TypeVar, Type, Union, cast, overload
 
 def print_hooks(x, hook=None, hook_name=None):
     print(f"NAME {hook_name} shape: {x.shape} x: {x}")
@@ -22,8 +20,7 @@ def flatten_dict(d: dict[str, T], prefix: str = "") -> dict[str, T]:
             result[new_key] = v
     return result
 
-
-class BaseWrappedModule(nn.Module):
+class WrappedModule(nn.Module):
     def __init__(self, module, hook_point):
         super().__init__()
         self.__dict__.update(module.__dict__)
