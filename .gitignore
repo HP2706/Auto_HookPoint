@@ -6,3 +6,5 @@
 pixel
 test.ipynb
 main.py
+__pycache__
+.pytest_cache
