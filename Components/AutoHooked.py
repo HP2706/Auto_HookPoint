@@ -87,6 +87,9 @@ class WrappedInstance(HookedRootModule, Generic[T]):
         self._wrap_submodules()
         self.setup()
 
+    def __iter__(self):
+        return iter(self._module)
+
     def new_attr_fn(self, name: str) -> Any:
         return getattr(self._module, name)
 

@@ -1,9 +1,9 @@
 from inspect import isclass
-from typing import List, Tuple, Protocol, TypeVar, Union
+from typing import Any, List, Tuple, Protocol, Type, TypeVar, Union
 from Components.AutoHooked import WrappedInstance, auto_hooked
 from transformer_lens.hook_points import HookPoint
 from Models import BaseTransformerConfig, VanillaTransformerBlock
-from test_utils import generate_expected_hookpoints
+from test_utils import generate_expected_hookpoints, get_duplicates
 import torch.nn as nn
 import torch
 import pytest
@@ -178,3 +178,26 @@ def test_check_unwrap_instance_works(module_class : T):
     
     wrapped_cls = auto_hooked(module_class)
     assert module_class == wrapped_cls.unwrap_instance()
+
+
+
+@pytest.mark.parametrize("module, kwargs", [
+    (SimpleModule(), {}),
+    (SimpleModelWithModuleDict(), {}),
+    (SimpleNestedModuleList(), {}),
+    (ComplexNestedModule(), {}),
+    (SimpleModule, {}),
+    (SimpleModelWithModuleDict, {}),
+    (SimpleNestedModuleList, {}),
+    (ComplexNestedModule, {}),
+])
+def test_duplicate_hooks(module : Union[T, Type[T]], kwargs : dict[str, Any]):
+    if isclass(module):
+        wrapped = auto_hooked(module)(**kwargs)
+        assert isinstance(wrapped, WrappedInstance), f"wrapped is not an instance of WrappedInstance, but {type(wrapped)}"
+    else:
+        wrapped = auto_hooked(module)
+    
+    hooks = [hook_name for hook_name, _ in wrapped.list_all_hooks()]
+    assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks} , hooks: {hooks} duplicates: {get_duplicates(hooks)}"
+    
