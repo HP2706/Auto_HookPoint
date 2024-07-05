@@ -152,3 +152,29 @@ def test_check_all_hooks(module_class : T, inp_shape : torch.Size):
         model = auto_hooked(module_class)
     generic_check_all_hooks(model, inp_shape)
 
+
+@pytest.mark.parametrize("module_class", [
+    SimpleModule,
+    SimpleModelWithModuleDict,
+    SimpleNestedModuleList,
+    ComplexNestedModule,
+])
+def test_check_unwrap_cls_works(module_class : T):
+    if not isclass(module_class):
+        raise ValueError("module_class must be a class in this test")
+    
+    wrapped_cls = auto_hooked(module_class)
+    assert module_class == wrapped_cls.unwrap_cls()
+
+@pytest.mark.parametrize("module_class", [
+    SimpleModule(),
+    SimpleModelWithModuleDict(),
+    SimpleNestedModuleList(),
+    ComplexNestedModule(),
+])
+def test_check_unwrap_instance_works(module_class : T):
+    if isclass(module_class):
+        raise ValueError("module_class must be an instance in this test")
+    
+    wrapped_cls = auto_hooked(module_class)
+    assert module_class == wrapped_cls.unwrap_instance()
