@@ -1,4 +1,5 @@
 from typing import Iterable, Tuple, Union
+from transformer_lens.hook_points import HookPoint
 import warnings
 from torch import nn
 import inspect
@@ -41,6 +42,8 @@ def generate_expected_hookpoints(model : nn.Module, prefix=''):
     expected_hooks = []
     assert isinstance(model, nn.Module)
     for name, module in model.named_children():
+        if type(module) is HookPoint:
+            continue
         full_name = f"{prefix}.{name}" if prefix else name
         
         if not full_name.endswith('.hook_point') and has_implemented_forward(module):
