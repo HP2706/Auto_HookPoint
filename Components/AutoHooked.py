@@ -1,5 +1,6 @@
 from __future__ import annotations
 from inspect import isclass
+import itertools
 from torch import nn
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
@@ -42,7 +43,6 @@ class WrappedClass(Generic[T]):
 
     def unwrap_cls(self) -> Type[T]:
         '''recursively unwraps the module class'''
-        print("unwrap cls called")
         for attr, value in self.module_class.__dict__.items():
             if isinstance(value, WrappedClass):
                 setattr(self.module_class, attr, value.unwrap_cls())
@@ -82,7 +82,8 @@ class WrappedInstance(HookedRootModule, Generic[T]):
 
         
         self._module = module
-        self.hook_point = HookPoint()
+        if not hasattr(self._module, 'hook_point'):
+            self.hook_point = HookPoint()
         self._create_forward()
         self._wrap_submodules()
         self.setup()
@@ -94,6 +95,7 @@ class WrappedInstance(HookedRootModule, Generic[T]):
         return getattr(self._module, name)
 
     #NOTE we override the nn.Module implementation to use _module only
+    #NOTE this is not an ideal approach b
     def named_modules(self, memo: Set[Module] | None = None, prefix: str = '', remove_duplicate: bool = True):
         #NOTE BE VERY CAREFUL HERE
         
@@ -103,6 +105,8 @@ class WrappedInstance(HookedRootModule, Generic[T]):
         if self not in memo:
             memo.add(self)
             yield prefix, self
+            #NOTE we dont need to iterate over the parameters here
+            #because we already did that in the __init__
             for name, module in self._module.named_children():
                 if module not in memo:
                     submodule_prefix = prefix + ('.' if prefix else '') + name
@@ -134,8 +138,22 @@ class WrappedInstance(HookedRootModule, Generic[T]):
         return self._module        
 
     def _wrap_submodules(self):
+        
+        """ for name, submodule in self._module.named_parameters():
+            if isinstance(submodule, nn.Parameter):
+                #NOTE IT IS NOT EASY TO WRAP A HOOKPOINT AROUND NN.PARAMETER
+                #THIS IS CURRENTLY NOT SUPPORTED BUT WILL BE NEEDED TO SUPPORT
+                #NOTE we can still set the hookpoint, but it doesnt provide meaningful utility 
+                # as it is hard to wrap the output of NN.PARAMETER 
+                
+                #WE SET THE HOOKPOINT BUT IS NOT USED
+                setattr(self._module, f'{name}.hook_point', HookPoint()) """ 
+        
         for name, submodule in self._module.named_children():
-            if isinstance(submodule, (nn.ModuleList, nn.Sequential)):
+            if isinstance(submodule, HookPoint):
+                continue
+             
+            elif isinstance(submodule, (nn.ModuleList, nn.Sequential)):
                 wrapped_container = type(submodule)() #initialize the container
                 for i, m in enumerate(submodule):
                     wrapped_container.append(auto_hooked(m))

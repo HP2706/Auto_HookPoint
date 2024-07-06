@@ -37,7 +37,7 @@ def generic_check_hook_fn_works(model : T, inp_shape : torch.Size):
 
 def generic_check_all_hooks(model, inp_shape : torch.Size):
     expected_hookpoints = generate_expected_hookpoints(model)
-
+    print('expected_hookpoints', expected_hookpoints)
     # Compare with actual hookpoints
     hook_list = model.list_all_hooks()
     check_hook_types(hook_list)
@@ -200,4 +200,20 @@ def test_duplicate_hooks(module : Union[T, Type[T]], kwargs : dict[str, Any]):
     
     hooks = [hook_name for hook_name, _ in wrapped.list_all_hooks()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks} , hooks: {hooks} duplicates: {get_duplicates(hooks)}"
+    
+
+@pytest.mark.parametrize("module, kwargs", [
+    (SimpleModule, {}),
+    (SimpleModelWithModuleDict, {}),
+    (SimpleNestedModuleList, {}),
+    (ComplexNestedModule, {}),
+])
+def test_generate_expected_hookpoints(module : Type[T], kwargs : dict[str, Any]):
+    #check expected hooks works
+    no_hook_expected = generate_expected_hookpoints(module(**kwargs))
+    hook_expected_1 = generate_expected_hookpoints(auto_hooked(module)(**kwargs))
+    hook_expected_2 = generate_expected_hookpoints(auto_hooked(module(**kwargs)))
+    assert no_hook_expected == hook_expected_1, f"no_hook_expected == hook_expected_1, {no_hook_expected} == {hook_expected_1}"
+    assert no_hook_expected == hook_expected_2, f"no_hook_expected == hook_expected_2, {no_hook_expected} == {hook_expected_2}"
+
     
