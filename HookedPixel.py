@@ -10,9 +10,3 @@ from transformer_lens.HookedTransformer import HookedTransformer, Loss, Output
 from transformer_lens.hook_points import HookPoint
 from HookedPixelConfig import HookedPixelCfg
 
-class HookedPixel(HookedTransformer):
-    def __init__(self,
-        cfg: HookedPixelCfg,
-        initialize_params: Optional[bool] = False):
-        super().__init__(cfg, initialize_params)
-    

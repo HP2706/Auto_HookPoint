@@ -778,13 +778,13 @@ class TransformerMixin(ModelMixin):
         is_master_process : bool
     ):
         super().__init__(cfg, is_master_process) 
-        if cfg.use_adam_8_bit:
+        """ if cfg.use_adam_8_bit:
             #this is adviced when using 8 bit optimizer
             self.embedding = bnb.nn.Embedding(cfg.vocab_size, cfg.d_model)
             self.pos_embed = bnb.nn.Embedding(cfg.n_ctx, cfg.d_model)
         else:
             self.embedding = nn.Embedding(cfg.vocab_size, cfg.d_model)
-            self.pos_embed = nn.Embedding(cfg.n_ctx, cfg.d_model)
+            self.pos_embed = nn.Embedding(cfg.n_ctx, cfg.d_model) """
 
         cfg.model_validate(cfg.model_dump())#this is for testing it is either instance or inherits
         self.cfg = cfg
@@ -842,8 +842,8 @@ class VanillaTransformer(TransformerMixin):
             cfg=cfg
         )
         self.transformer = nn.ModuleDict(dict(
-            embedding = self.embedding,
-            pos_embed = self.pos_embed,
+            embedding = nn.Embedding(cfg.vocab_size, cfg.d_model),
+            pos_embed = nn.Embedding(cfg.n_ctx, cfg.d_model),
             layers = nn.ModuleList([VanillaTransformerBlock(cfg) for _ in range(cfg.n_layers)]),
             ln_f = nn.LayerNorm(cfg.d_model),
         ))
@@ -860,8 +860,10 @@ class VanillaTransformer(TransformerMixin):
         self.check_forward(idx, targets)
         B, T = idx.size()
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
-        pos_emb = self.transformer.pos_embed(pos) # position embeddings of shape (T, d_model)
-        tok_emb = self.transformer.embedding(idx) # token embeddings of shape (B, T, d_model)
+        pos_emb = self.transformer.pos_embed.forward(pos) # position embeddings of shape (T, d_model)
+        tok_emb = self.transformer.embedding.forward(idx) # token embeddings of shape (B, T, d_model)
+        print("tok_emb", tok_emb.shape)
+        print("pos_emb", pos_emb.shape)
         x = tok_emb + pos_emb
         # forward the blocks of the transformer
         for block in cast(List[VanillaTransformerBlock], self.transformer.layers):
