@@ -10,7 +10,7 @@ def get_duplicates(lst : list[str]) -> list[str]:
 
 BUILT_IN_MODULES = [
     nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d,
-    nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.LayerNorm, nn.Embedding,
+    nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.LayerNorm ,nn.LayerNorm, nn.Embedding,
     nn.RNN, nn.LSTM, nn.GRU, nn.RNNCell, nn.LSTMCell, nn.GRUCell, 
     # Add more built-in module types as needed
 ]

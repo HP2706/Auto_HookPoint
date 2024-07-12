@@ -36,7 +36,8 @@ class SimpleModelWithModuleDict(nn.Module):
     def get_forward_shape(self):
         return torch.Size([1, 10])
 
-    def forward(self, x):
+    def forward(self, input_ids):
+        x = input_ids
         x = self.bla["0"](x)
         x = self.bla["1"](x)
         return x
@@ -49,7 +50,8 @@ class SimpleModule(nn.Module):
     def get_forward_shape(self):
         return torch.Size([1, 10])
 
-    def forward(self, x):
+    def forward(self, input_ids):
+        x = input_ids
         return self.inner1(x)
 
 class SimpleNestedModuleList(nn.Module):
@@ -60,7 +62,8 @@ class SimpleNestedModuleList(nn.Module):
     def get_forward_shape(self):
         return self.bla[0].get_forward_shape()
 
-    def forward(self, x):
+    def forward(self, input_ids):
+        x = input_ids
         for module in self.bla:
             x = module(x)
         return x
@@ -80,7 +83,8 @@ class ComplexNestedModule(nn.Module):
     def get_forward_shape(self):
         return torch.Size([1, 10, self.cfg.d_model])
 
-    def forward(self, x):
+    def forward(self, input_ids):
+        x = input_ids
         for module in self.bla:
             x = module(x)
         return x
