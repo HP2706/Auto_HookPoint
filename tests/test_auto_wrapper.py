@@ -2,18 +2,23 @@ from inspect import isclass
 from typing import Any, List, Tuple, Protocol, Type, TypeVar, Union
 from Components.AutoHooked import WrappedInstance, auto_hooked
 from transformer_lens.hook_points import HookPoint
-from Models import BaseTransformerConfig, VanillaTransformerBlock
 from test_utils import generate_expected_hookpoints, get_duplicates
 import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from abc import ABC
+from .dummy_models import (
+    SimpleModule, 
+    SimpleModelWithModuleDict, 
+    SimpleNestedModuleList, 
+    ComplexNestedModule,
+    small_llama_config
+)
+from transformers.models.llama import LlamaForCausalLM
+from transformers.models.mixtral import MixtralForCausalLM
+#for testing 
 
-
-class Model(nn.Module):...
-
-T = TypeVar('T', bound=Model)
+T = TypeVar('T', bound=nn.Module)
 
 def check_hook_types(hook_list : List[Tuple[str, str]]):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
@@ -54,144 +59,52 @@ def generic_check_all_hooks(model, inp_shape : torch.Size):
         )
     print("TEST PASSED")
 
-class SimpleModelWithModuleDict(Model):
-    def __init__(self):
-        super().__init__()
-        self.bla = nn.ModuleDict({"0": nn.Linear(10, 10), "1": nn.Linear(10, 10)})
+# Define common test cases
+TEST_CASES = [
+    (SimpleModule, torch.Size([1, 10]), {}),
+    (SimpleModelWithModuleDict, torch.Size([1, 10]), {}),
+    (SimpleNestedModuleList, torch.Size([1, 10]), {}),
+    (ComplexNestedModule, torch.Size([1, 10, 128]), {}),
+    #(LlamaForCausalLM, torch.Size([1, 10]), small_llama_config),
+]
 
-    def get_forward_shape(self):
-        return torch.Size([1, 10])
+# Add instance versions of the test cases
+INSTANCE_TEST_CASES = [
+    (cls(), inp_shape, {}) for cls, inp_shape, _ in TEST_CASES[:-1]
+] #+ [(LlamaForCausalLM(small_llama_config), torch.Size([1, 10]), {})]
 
-    def forward(self, x):
-        x = self.bla["0"](x)
-        x = self.bla["1"](x)
-        return x
+ALL_TEST_CASES = TEST_CASES + INSTANCE_TEST_CASES
 
-class SimpleModule(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.inner1 = nn.Linear(10, 10)
-    
-    def get_forward_shape(self):
-        return torch.Size([1, 10])
-
-    def forward(self, x):
-        return self.inner1(x)
-
-class SimpleNestedModuleList(Model):
-    def __init__(self):
-        super().__init__()
-        self.bla = nn.ModuleList([SimpleModule(), SimpleModule()])
-
-    def get_forward_shape(self):
-        return self.bla[0].get_forward_shape()
-
-    def forward(self, x):
-        for module in self.bla:
-            x = module(x)
-        return x
-    
-class ComplexNestedModule(Model):
-    def __init__(self):
-        super().__init__()
-        cfg = BaseTransformerConfig(
-            d_model = 128,
-            n_layers = 3,
-            num_heads = 4,
-            is_training=True,
-        )
-        self.cfg = cfg
-        self.bla = nn.ModuleList([VanillaTransformerBlock(cfg)])
-
-    def get_forward_shape(self):
-        return torch.Size([1, 10, self.cfg.d_model])
-
-    def forward(self, x):
-        for module in self.bla:
-            x = module(x)
-        return x
-
-# Test cases
-@pytest.mark.parametrize("module_class, inp_shape", [
-    (SimpleModule , torch.Size([1, 10])),
-    (SimpleModelWithModuleDict, torch.Size([1, 10])),
-    (SimpleNestedModuleList, torch.Size([1, 10])),
-    (ComplexNestedModule, torch.Size([1, 10, 128])),
-    (SimpleModule(), torch.Size([1, 10])),
-    (SimpleModelWithModuleDict(), torch.Size([1, 10])),
-    (SimpleNestedModuleList(), torch.Size([1, 10])),
-    (ComplexNestedModule(), torch.Size([1, 10, 128])),
-])
-def test_hook_fn_works(module_class : T, inp_shape : torch.Size):
+@pytest.mark.parametrize("module_class, inp_shape, kwargs", ALL_TEST_CASES)
+def test_hook_fn_works(module_class: T, inp_shape: torch.Size, kwargs: dict[str, Any]):
     if isclass(module_class):
         print("IS CLASS")
-        model = auto_hooked(module_class)()
+        model = auto_hooked(module_class)(**kwargs)
     else:
         print("IS INSTANCE")
         model = auto_hooked(module_class)
     generic_check_hook_fn_works(model, inp_shape)
 
-@pytest.mark.parametrize("module_class, inp_shape", [
-    (SimpleModule, torch.Size([1, 10])),
-    (SimpleModelWithModuleDict, torch.Size([1, 10])),
-    (SimpleNestedModuleList, torch.Size([1, 10])),
-    (ComplexNestedModule, torch.Size([1, 10])),
-    (SimpleModule(), torch.Size([1, 10])),
-    (SimpleModelWithModuleDict(), torch.Size([1, 10])),
-    (SimpleNestedModuleList(), torch.Size([1, 10])),
-    (ComplexNestedModule(), torch.Size([1, 10])),
-])
-def test_check_all_hooks(module_class : T, inp_shape : torch.Size):
-    # NOTE we are implicitly testing wrap_cls() and wrap_instance()
-    # if auto_hooked is give a cls as input it will wrap the cls with wrap_class() and return the wrapped cls
-    # if an instance is given as input it will wrap the instance with wrap_instance() and return the wrapped instance
-    # SO ORDER matters
+@pytest.mark.parametrize("module_class, inp_shape, kwargs", ALL_TEST_CASES)
+def test_check_all_hooks(module_class: T, inp_shape: torch.Size, kwargs: dict[str, Any]):
     if isclass(module_class):
-        model = auto_hooked(module_class)()
+        model = auto_hooked(module_class)(**kwargs)
     else:
         model = auto_hooked(module_class)
     generic_check_all_hooks(model, inp_shape)
 
-
-@pytest.mark.parametrize("module_class", [
-    SimpleModule,
-    SimpleModelWithModuleDict,
-    SimpleNestedModuleList,
-    ComplexNestedModule,
-])
-def test_check_unwrap_cls_works(module_class : T):
-    if not isclass(module_class):
-        raise ValueError("module_class must be a class in this test")
-    
+@pytest.mark.parametrize("module_class, _, kwargs", TEST_CASES)
+def test_check_unwrap_cls_works(module_class: T, _, kwargs: dict[str, Any]):
     wrapped_cls = auto_hooked(module_class)
     assert module_class == wrapped_cls.unwrap_cls()
 
-@pytest.mark.parametrize("module_class", [
-    SimpleModule(),
-    SimpleModelWithModuleDict(),
-    SimpleNestedModuleList(),
-    ComplexNestedModule(),
-])
-def test_check_unwrap_instance_works(module_class : T):
-    if isclass(module_class):
-        raise ValueError("module_class must be an instance in this test")
-    
-    wrapped_cls = auto_hooked(module_class)
-    assert module_class == wrapped_cls.unwrap_instance()
+@pytest.mark.parametrize("module_instance, _, __", INSTANCE_TEST_CASES)
+def test_check_unwrap_instance_works(module_instance: T, _, __):
+    wrapped_instance = auto_hooked(module_instance)
+    assert module_instance == wrapped_instance.unwrap_instance()
 
-
-
-@pytest.mark.parametrize("module, kwargs", [
-    (SimpleModule(), {}),
-    (SimpleModelWithModuleDict(), {}),
-    (SimpleNestedModuleList(), {}),
-    (ComplexNestedModule(), {}),
-    (SimpleModule, {}),
-    (SimpleModelWithModuleDict, {}),
-    (SimpleNestedModuleList, {}),
-    (ComplexNestedModule, {}),
-])
-def test_duplicate_hooks(module : Union[T, Type[T]], kwargs : dict[str, Any]):
+@pytest.mark.parametrize("module, inp_shape, kwargs", ALL_TEST_CASES)
+def test_duplicate_hooks(module: Union[T, Type[T]], inp_shape: torch.Size, kwargs: dict[str, Any]):
     if isclass(module):
         wrapped = auto_hooked(module)(**kwargs)
         assert isinstance(wrapped, WrappedInstance), f"wrapped is not an instance of WrappedInstance, but {type(wrapped)}"
@@ -200,20 +113,11 @@ def test_duplicate_hooks(module : Union[T, Type[T]], kwargs : dict[str, Any]):
     
     hooks = [hook_name for hook_name, _ in wrapped.list_all_hooks()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks} , hooks: {hooks} duplicates: {get_duplicates(hooks)}"
-    
 
-@pytest.mark.parametrize("module, kwargs", [
-    (SimpleModule, {}),
-    (SimpleModelWithModuleDict, {}),
-    (SimpleNestedModuleList, {}),
-    (ComplexNestedModule, {}),
-])
-def test_generate_expected_hookpoints(module : Type[T], kwargs : dict[str, Any]):
-    #check expected hooks works
+@pytest.mark.parametrize("module, inp_shape, kwargs", TEST_CASES)
+def test_generate_expected_hookpoints(module: Type[T], inp_shape: torch.Size, kwargs: dict[str, Any]):
     no_hook_expected = generate_expected_hookpoints(module(**kwargs))
     hook_expected_1 = generate_expected_hookpoints(auto_hooked(module)(**kwargs))
     hook_expected_2 = generate_expected_hookpoints(auto_hooked(module(**kwargs)))
     assert no_hook_expected == hook_expected_1, f"no_hook_expected == hook_expected_1, {no_hook_expected} == {hook_expected_1}"
     assert no_hook_expected == hook_expected_2, f"no_hook_expected == hook_expected_2, {no_hook_expected} == {hook_expected_2}"
-
-    
