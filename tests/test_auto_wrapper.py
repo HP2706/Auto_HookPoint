@@ -5,8 +5,6 @@ from transformer_lens.hook_points import HookPoint
 from test_utils import (
     generate_expected_hookpoints, 
     get_duplicates, 
-    init_model, 
-    check_is_hf,
     prepare_model_and_input
 )
 import torch.nn as nn
@@ -19,7 +17,6 @@ from .test_models import (
     SimpleNestedModuleList, 
     ComplexNestedModule,
     small_llama_config,
-    HF_MODELS
 )
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
@@ -38,7 +35,7 @@ def generic_check_hook_fn_works(model : T, inp_tensor : torch.Tensor):
         return x
 
     hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
-    #print(f"HOOK NAMES: {hook_names}")
+    print("inp_tensor", inp_tensor)
 
     model.run_with_hooks(
         input_ids=inp_tensor, # assume d_vocab is at least 1000
@@ -49,7 +46,6 @@ def generic_check_hook_fn_works(model : T, inp_tensor : torch.Tensor):
 
 def generic_check_all_hooks(model, inp_shape : torch.Size):
     expected_hookpoints = generate_expected_hookpoints(model)
-    print('expected_hookpoints', expected_hookpoints)
     # Compare with actual hookpoints
     hook_list = model.list_all_hooks()
     check_hook_types(hook_list)
@@ -72,11 +68,11 @@ CLASS_TEST_CASES = [
     (SimpleModelWithModuleDict, torch.Size([1, 10]), {}),
     (SimpleNestedModuleList, torch.Size([1, 10]), {}),
     (ComplexNestedModule, torch.Size([1, 10, 128]), {}),
-    (LlamaForCausalLM, torch.Size([1, 10]), small_llama_config),
+    (LlamaForCausalLM, torch.Size([1, 10]), {'config' : small_llama_config}),
 ]
 
 INSTANCE_TEST_CASES = [
-    (LlamaForCausalLM(small_llama_config), torch.Size([1, 10]), small_llama_config),
+    (LlamaForCausalLM(config=small_llama_config), torch.Size([1, 10]), {'config' : small_llama_config}),
     (SimpleModule(), torch.Size([1, 10]), {}),
     (SimpleModelWithModuleDict(), torch.Size([1, 10]), {}),
     (SimpleNestedModuleList(), torch.Size([1, 10]), {}),
@@ -112,13 +108,13 @@ def test_check_unwrap_works(
     if isclass(module):
         unwrapped = auto_hook(module).unwrap_cls()
     else:
-        model, _ = prepare_model_and_input(module, _, kwargs)
+        model, _ = prepare_model_and_input(module, _, kwargs) #type: ignore
         unwrapped = model.unwrap_instance()
     assert unwrapped == module, f"Unwrapped {unwrapped} is not the same as the original {module}"
     
 @pytest.mark.parametrize("module, _ , kwargs", ALL_TEST_CASES)
 def test_duplicate_hooks(module: Union[T, Type[T]], _: torch.Size, kwargs: dict[str, Any]):
-    model, _ = prepare_model_and_input(module, _, kwargs)
+    model, _ = prepare_model_and_input(module, _, kwargs) #type: ignore
     hooks = [hook_name for hook_name, _ in model.list_all_hooks()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks}, hooks: {hooks} duplicates: {get_duplicates(hooks)}"
 
@@ -128,8 +124,7 @@ def test_generate_expected_hookpoints(
     _: torch.Size, 
     kwargs: dict[str, Any]
 ):
-    is_hf = check_is_hf(module)
-    no_hook_expected = generate_expected_hookpoints(init_model(module, kwargs, is_hf))
-    hook_expected_1 = generate_expected_hookpoints(init_model(auto_hook(module), kwargs, is_hf))
-    hook_expected_2 = generate_expected_hookpoints(auto_hook(init_model(module, kwargs, is_hf)))
+    no_hook_expected = generate_expected_hookpoints(module(**kwargs))
+    hook_expected_1 = generate_expected_hookpoints(auto_hook(module)(**kwargs))
+    hook_expected_2 = generate_expected_hookpoints(auto_hook(module(**kwargs)))
     assert no_hook_expected == hook_expected_1 == hook_expected_2, "Expected hookpoints do not match"
