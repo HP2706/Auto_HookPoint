@@ -29,50 +29,16 @@ T = TypeVar('T', bound=nn.Module)
 P = ParamSpec('P')
 R = TypeVar('R')
 
-
-class HookedClass(Generic[T]):
-    def __init__(self, module_class: Type[T]) -> T: # type: ignore
-        self.module_class = module_class
-
-    def __call__(self, *args: Any, **kwargs: Any) -> HookedInstance[T]:
-        instance = self.module_class(*args, **kwargs)
-        return auto_hook(instance)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.module_class, name)
-
-    def unwrap_cls(self) -> Type[T]:
-        '''recursively unwraps the module class'''
-        for attr, value in self.module_class.__dict__.items():
-            if isinstance(value, HookedClass):
-                setattr(self.module_class, attr, value.unwrap_cls())
-            elif isinstance(value, type) and issubclass(value, nn.Module):
-                if isinstance(value, HookedClass):
-                    setattr(self.module_class, attr, value.unwrap_cls())
-                else:
-                    Hooked_value = auto_hook(value)
-                    if isinstance(Hooked_value, HookedClass):
-                        setattr(self.module_class, attr, Hooked_value.unwrap_cls())
-        return self.module_class
-
-@overload
-def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
-
-@overload
-def auto_hook(module_or_class: T) -> HookedInstance[T]: ...
-
-def auto_hook(module_or_class: Union[T, Type[T]]) -> Union[HookedInstance[T], HookedClass[T]]:
+def auto_hook(module: T) -> HookedInstance[T]:
     '''
     This function wraps either a module instance or a module class and returns a type that
     preserves the original module's interface plus an additional unwrap method.
     '''
-    if isclass(module_or_class):
-        return HookedClass(module_or_class)
-    else:
-        Hooked = HookedInstance(module_or_class) # type: ignore
-        #NOTE we set the unwrap method to just return module_or_class
-        Hooked.unwrap = lambda: module_or_class # type: ignore
-        return cast(HookedInstance[T], Hooked)
+    assert not isinstance(module, HookedInstance), "Module is already hooked"
+    Hooked = HookedInstance(module) # type: ignore
+    #NOTE we set the unwrap method to just return module_or_class
+    Hooked.unwrap = lambda: module # type: ignore
+    return cast(HookedInstance[T], Hooked)
 
 class HookedInstance(HookedRootModule, Generic[T]):
     def __init__(self, module: T):

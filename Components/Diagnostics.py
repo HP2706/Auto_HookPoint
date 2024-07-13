@@ -3,7 +3,6 @@ from tests import test_auto_wrapper
 from typing import Any, Callable, List, Optional, Type, TypeVar, Union, cast
 import torch.nn as nn
 from Components.AutoHooked import HookedInstance, auto_hook
-from test_utils import prepare_model_and_input
 import torch
 
 T = TypeVar("T", bound=nn.Module)

@@ -5,7 +5,6 @@ from Components.AutoHooked import HookedInstance, auto_hook
 from typing import Any, List, Union
 from collections import Counter
 from typing import TypeVar, Type
-import torch
 from inspect import isclass
 
 T = TypeVar('T', bound=nn.Module)
@@ -19,23 +18,6 @@ BUILT_IN_MODULES = [
     nn.RNN, nn.LSTM, nn.GRU, nn.RNNCell, nn.LSTMCell, nn.GRUCell, 
     # Add more built-in module types as needed
 ]
-
-def prepare_model_and_input(
-    module_class_or_instance : Union[T, Type[T]], 
-    inp_shape : Union[torch.Size, List[int]], 
-    kwargs : dict[str, Any]
-):
-    if isclass(module_class_or_instance):
-        model = auto_hook(module_class_or_instance)(**kwargs)
-    else:
-        model = auto_hook(module_class_or_instance)
-    
-    if kwargs.get('config'): #TODO this is bad
-        vocab = kwargs['config'].vocab_size
-        input = torch.randint(0, vocab, inp_shape)
-    else:
-        input = torch.randn(inp_shape)
-    return model, input
 
 def generate_expected_hookpoints(model : Union[HookedInstance, nn.Module],  prefix='') -> list[str]:
     expected_hooks = set()
