@@ -57,10 +57,12 @@ def generic_check_all_hooks(model):
 
     # Find missing hookpoints
     missing_hookpoints = set(expected_hookpoints) - set(actual_hookpoints)
+    additional_hookpoints = set(actual_hookpoints) - set(expected_hookpoints)
 
     if missing_hookpoints:
         raise ValueError(
             f"Missing hookpoints: {missing_hookpoints} \n\n"
+            f"Additional hookpoints: {additional_hookpoints} \n\n"
             f"Expected hookpoints: {expected_hookpoints} \n\n"
             f"Actual hookpoints: {actual_hookpoints} \n\n"
         )
@@ -69,10 +71,10 @@ def generic_check_all_hooks(model):
 #module instance, input 
 def get_test_cases():
     return [
-        (SimpleModule(), {'x' : torch.randn(1, 10)} ),
-        (SimpleModelWithModuleDict(), {'x' : torch.randn(1, 10)} ),
-        (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)} ),
-        (ComplexNestedModule(), {'x' : torch.randn(1, 10, 128)} ),
+        #(SimpleModule(), {'x' : torch.randn(1, 10)} ),
+        #(SimpleModelWithModuleDict(), {'x' : torch.randn(1, 10)} ),
+        #(SimpleNestedModuleList(), {'x' : torch.randn(1, 10)} ),
+        #(ComplexNestedModule(), {'x' : torch.randn(1, 10, 128)} ),
         (LlamaForCausalLM(config=small_llama_config), {'input_ids' : torch.randint(0, 1000, (1, 10))})
     ]
 

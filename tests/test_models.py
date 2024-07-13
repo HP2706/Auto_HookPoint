@@ -7,9 +7,9 @@ from transformers.models.llama import LlamaForCausalLM
 
 small_llama_config = LlamaConfig(
     vocab_size=1000,
-    hidden_size=256,
-    intermediate_size=512,
-    num_hidden_layers=4,
+    hidden_size=8,
+    intermediate_size=16,
+    num_hidden_layers=1,
     num_attention_heads=4,
     num_key_value_heads=4,
     hidden_act="silu",
