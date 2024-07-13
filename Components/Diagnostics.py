@@ -2,7 +2,7 @@ import inspect
 from tests import test_auto_wrapper
 from typing import Any, Callable, List, Optional, Type, TypeVar, Union, cast
 import torch.nn as nn
-from Components.AutoHooked import HookedInstance, auto_hook
+from Components.AutoHooked import HookedModule, auto_hook
 import torch
 
 T = TypeVar("T", bound=nn.Module)
@@ -11,7 +11,7 @@ def check_auto_hook(
     model_type: Type[T],
     input_shape : Union[torch.Size, List[int]],
     kwargs: dict[str, Any] = {},
-) -> HookedInstance[T]:
+) -> HookedModule[T]:
     assert inspect.isclass(model_type), "model_type must be a class"
 
     #iterate over both the instance and the

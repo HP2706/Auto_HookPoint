@@ -1,7 +1,7 @@
 from torch import nn
 from utils import has_implemented_forward, iterate_module
 from transformer_lens.hook_points import HookPoint
-from Components.AutoHooked import HookedInstance, auto_hook, BUILT_IN_MODULES
+from Components.AutoHooked import HookedModule, auto_hook, BUILT_IN_MODULES
 from typing import Any, List, Union
 from collections import Counter
 from typing import TypeVar, Type
@@ -9,13 +9,14 @@ from inspect import isclass
 
 T = TypeVar('T', bound=nn.Module)
 
+
 def get_duplicates(lst : list[str]) -> list[str]:
     return [item for item, count in Counter(lst).items() if count > 1]
 
-def generate_expected_hookpoints(model : Union[HookedInstance, nn.Module],  prefix='') -> list[str]:
+def generate_expected_hookpoints(model : Union[HookedModule, nn.Module],  prefix='') -> list[str]:
     expected_hooks = set()
     expected_hooks.add('hook_point')
-    if isinstance(model, HookedInstance):
+    if isinstance(model, HookedModule):
         model = model._module
 
     for name, module in model.named_children():
