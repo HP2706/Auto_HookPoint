@@ -30,13 +30,13 @@ P = ParamSpec('P')
 R = TypeVar('R')
 
 
-class WrappedClass(Generic[T]):
+class HookedClass(Generic[T]):
     def __init__(self, module_class: Type[T]) -> T: # type: ignore
         self.module_class = module_class
 
-    def __call__(self, *args: Any, **kwargs: Any) -> WrappedInstance[T]:
+    def __call__(self, *args: Any, **kwargs: Any) -> HookedInstance[T]:
         instance = self.module_class(*args, **kwargs)
-        return auto_hooked(instance)
+        return auto_hook(instance)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.module_class, name)
@@ -44,37 +44,37 @@ class WrappedClass(Generic[T]):
     def unwrap_cls(self) -> Type[T]:
         '''recursively unwraps the module class'''
         for attr, value in self.module_class.__dict__.items():
-            if isinstance(value, WrappedClass):
+            if isinstance(value, HookedClass):
                 setattr(self.module_class, attr, value.unwrap_cls())
             elif isinstance(value, type) and issubclass(value, nn.Module):
-                if isinstance(value, WrappedClass):
+                if isinstance(value, HookedClass):
                     setattr(self.module_class, attr, value.unwrap_cls())
                 else:
-                    wrapped_value = auto_hooked(value)
-                    if isinstance(wrapped_value, WrappedClass):
-                        setattr(self.module_class, attr, wrapped_value.unwrap_cls())
+                    Hooked_value = auto_hook(value)
+                    if isinstance(Hooked_value, HookedClass):
+                        setattr(self.module_class, attr, Hooked_value.unwrap_cls())
         return self.module_class
 
 @overload
-def auto_hooked(module_or_class: Type[T]) -> WrappedClass[T]: ...
+def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
 
 @overload
-def auto_hooked(module_or_class: T) -> WrappedInstance[T]: ...
+def auto_hook(module_or_class: T) -> HookedInstance[T]: ...
 
-def auto_hooked(module_or_class: Union[T, Type[T]]) -> Union[WrappedInstance[T], WrappedClass[T]]:
+def auto_hook(module_or_class: Union[T, Type[T]]) -> Union[HookedInstance[T], HookedClass[T]]:
     '''
     This function wraps either a module instance or a module class and returns a type that
     preserves the original module's interface plus an additional unwrap method.
     '''
     if isclass(module_or_class):
-        return WrappedClass(module_or_class)
+        return HookedClass(module_or_class)
     else:
-        wrapped = WrappedInstance(module_or_class) # type: ignore
+        Hooked = HookedInstance(module_or_class) # type: ignore
         #NOTE we set the unwrap method to just return module_or_class
-        wrapped.unwrap = lambda: module_or_class # type: ignore
-        return cast(WrappedInstance[T], wrapped)
+        Hooked.unwrap = lambda: module_or_class # type: ignore
+        return cast(HookedInstance[T], Hooked)
 
-class WrappedInstance(HookedRootModule, Generic[T]):
+class HookedInstance(HookedRootModule, Generic[T]):
     def __init__(self, module: T):
         super().__init__()
         # NOTE we need to name it in this way to not 
@@ -110,7 +110,7 @@ class WrappedInstance(HookedRootModule, Generic[T]):
             for name, module in self._module.named_children():
                 if module not in memo:
                     submodule_prefix = prefix + ('.' if prefix else '') + name
-                    if isinstance(module, WrappedInstance):
+                    if isinstance(module, HookedInstance):
                         yield from module.named_modules(memo, submodule_prefix)
                     else:
                         yield submodule_prefix, module
@@ -124,16 +124,16 @@ class WrappedInstance(HookedRootModule, Generic[T]):
     def unwrap_instance(self) -> T:
         for name, submodule in self._module.named_children():
             if isinstance(submodule, (nn.ModuleList, nn.Sequential)):
-                unwrapped_container = type(submodule)()
+                unHooked_container = type(submodule)()
                 for m in submodule:
-                    unwrapped_container.append(m.unwrap_instance() if isinstance(m, WrappedInstance) else m)
-                setattr(self._module, name, unwrapped_container)
+                    unHooked_container.append(m.unwrap_instance() if isinstance(m, HookedInstance) else m)
+                setattr(self._module, name, unHooked_container)
             elif isinstance(submodule, nn.ModuleDict):
-                unwrapped_container = type(submodule)()
+                unHooked_container = type(submodule)()
                 for key, m in submodule.items():
-                    unwrapped_container[key] = m.unwrap_instance() if isinstance(m, WrappedInstance) else m
-                setattr(self._module, name, unwrapped_container)
-            elif isinstance(submodule, WrappedInstance):
+                    unHooked_container[key] = m.unwrap_instance() if isinstance(m, HookedInstance) else m
+                setattr(self._module, name, unHooked_container)
+            elif isinstance(submodule, HookedInstance):
                 setattr(self._module, name, submodule.unwrap_instance())
         return self._module        
 
@@ -154,17 +154,17 @@ class WrappedInstance(HookedRootModule, Generic[T]):
                 continue
              
             elif isinstance(submodule, (nn.ModuleList, nn.Sequential)):
-                wrapped_container = type(submodule)() #initialize the container
+                Hooked_container = type(submodule)() #initialize the container
                 for i, m in enumerate(submodule):
-                    wrapped_container.append(auto_hooked(m))
-                setattr(self._module, name, wrapped_container)
+                    Hooked_container.append(auto_hook(m))
+                setattr(self._module, name, Hooked_container)
             elif isinstance(submodule, nn.ModuleDict):
-                wrapped_container = type(submodule)()
+                Hooked_container = type(submodule)()
                 for key, m in submodule.items():
-                    wrapped_container[key] = auto_hooked(m)
-                setattr(self._module, name, wrapped_container)
+                    Hooked_container[key] = auto_hook(m)
+                setattr(self._module, name, Hooked_container)
             else:
-                setattr(self._module, name, auto_hooked(submodule))
+                setattr(self._module, name, auto_hook(submodule))
 
     def _create_forward(self):
         original_forward = self._module.forward

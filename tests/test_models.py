@@ -3,6 +3,9 @@ from transformers.models.llama import  LlamaConfig
 from transformers.models.mixtral import MixtralConfig
 import torch.nn as nn
 import torch
+from transformers.models.llama import LlamaForCausalLM
+#the huggingface models to test
+HF_MODELS = [LlamaForCausalLM]
 
 small_llama_config = LlamaConfig(
     vocab_size=1000,

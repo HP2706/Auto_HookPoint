@@ -1,18 +1,25 @@
 from inspect import isclass
 from typing import Any, List, Optional, Tuple, Protocol, Type, TypeVar, Union
-from Components.AutoHooked import WrappedInstance, auto_hooked
+from Components.AutoHooked import HookedInstance, auto_hook
 from transformer_lens.hook_points import HookPoint
-from test_utils import generate_expected_hookpoints, get_duplicates
+from test_utils import (
+    generate_expected_hookpoints, 
+    get_duplicates, 
+    init_model, 
+    check_is_hf,
+    prepare_model_and_input
+)
 import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .dummy_models import (
+from .test_models import (
     SimpleModule, 
     SimpleModelWithModuleDict, 
     SimpleNestedModuleList, 
     ComplexNestedModule,
-    small_llama_config
+    small_llama_config,
+    HF_MODELS
 )
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
@@ -59,9 +66,6 @@ def generic_check_all_hooks(model, inp_shape : torch.Size):
         )
     print("TEST PASSED")
 
-
-HF_MODELS = [LlamaForCausalLM]
-
 # Define common test cases
 CLASS_TEST_CASES = [
     (SimpleModule, torch.Size([1, 10]), {}),
@@ -80,66 +84,52 @@ INSTANCE_TEST_CASES = [
 ]
 ALL_TEST_CASES = CLASS_TEST_CASES + INSTANCE_TEST_CASES 
 
-def init_model(module_class, kwargs, is_hf: bool = False):
-    if is_hf:
-        return module_class(config=kwargs)
-    return module_class(**kwargs)
-
-def check_is_hf(model: Union[T, Type[T]]) -> bool:
-    return model in HF_MODELS or type(model) in HF_MODELS
-
-def prepare_model_and_input(module_class_or_instance, inp_shape, kwargs):
-    is_hf = check_is_hf(module_class_or_instance)
-    if isclass(module_class_or_instance):
-        model = init_model(auto_hooked(module_class_or_instance), kwargs, is_hf)
-    else:
-        model = auto_hooked(module_class_or_instance)
-    
-    vocab = kwargs.get('vocab_size', 10) if isinstance(kwargs, dict) else kwargs.vocab_size
-    
-    if is_hf:
-        assert vocab is not None, "vocab_size is required for HF models"
-        input = torch.randint(0, vocab, inp_shape)
-    else:
-        input = torch.randn(inp_shape)
-    
-    return model, input
-
 @pytest.mark.parametrize("module_class, inp_shape, kwargs", ALL_TEST_CASES)
-def test_hook_fn_works(module_class: T, inp_shape: torch.Size, kwargs: dict[str, Any]):
+def test_hook_fn_works(
+    module_class: T, 
+    inp_shape: torch.Size, 
+    kwargs: dict[str, Any]
+):
     model, input = prepare_model_and_input(module_class, inp_shape, kwargs)
     generic_check_hook_fn_works(model, input)
 
 @pytest.mark.parametrize("module_class, inp_shape, kwargs", INSTANCE_TEST_CASES)
-def test_check_all_hooks(module_class: T, inp_shape: torch.Size, kwargs: dict[str, Any]):
+def test_check_all_hooks(
+    module_class: T, 
+    inp_shape: torch.Size, 
+    kwargs: dict[str, Any]
+):
     model, _ = prepare_model_and_input(module_class, inp_shape, kwargs)
     generic_check_all_hooks(model, inp_shape)
 
-@pytest.mark.parametrize("module_class, _, __", CLASS_TEST_CASES)
-def test_check_unwrap_cls_works(
-    module_class: T, 
-    _, 
-    __ : dict[str, Any]
-):
-    wrapped_cls = auto_hooked(module_class)
-    assert module_class == wrapped_cls.unwrap_cls()
 
-@pytest.mark.parametrize("module_instance, _, kwargs", INSTANCE_TEST_CASES)
-def test_check_unwrap_instance_works(module_instance: T, _, kwargs: dict[str, Any]):
-    model, _ = prepare_model_and_input(module_instance, _, kwargs)
-    unwrapped = model.unwrap_instance()
-    assert isinstance(unwrapped, type(module_instance)), f"Unwrapped instance {unwrapped} is not an instance of {type(module_instance)}"
+@pytest.mark.parametrize("module, _, kwargs", ALL_TEST_CASES)
+def test_check_unwrap_works(
+    module: Union[T, Type[T]], 
+    _: torch.Size, 
+    kwargs: dict[str, Any]
+):
+    if isclass(module):
+        unwrapped = auto_hook(module).unwrap_cls()
+    else:
+        model, _ = prepare_model_and_input(module, _, kwargs)
+        unwrapped = model.unwrap_instance()
+    assert unwrapped == module, f"Unwrapped {unwrapped} is not the same as the original {module}"
     
 @pytest.mark.parametrize("module, _ , kwargs", ALL_TEST_CASES)
 def test_duplicate_hooks(module: Union[T, Type[T]], _: torch.Size, kwargs: dict[str, Any]):
     model, _ = prepare_model_and_input(module, _, kwargs)
     hooks = [hook_name for hook_name, _ in model.list_all_hooks()]
-    assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks} , hooks: {hooks} duplicates: {get_duplicates(hooks)}"
+    assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks}, hooks: {hooks} duplicates: {get_duplicates(hooks)}"
 
 @pytest.mark.parametrize("module, _ , kwargs", CLASS_TEST_CASES)
-def test_generate_expected_hookpoints(module: Type[T], _: torch.Size, kwargs: dict[str, Any]):
+def test_generate_expected_hookpoints(
+    module: Type[T], 
+    _: torch.Size, 
+    kwargs: dict[str, Any]
+):
     is_hf = check_is_hf(module)
     no_hook_expected = generate_expected_hookpoints(init_model(module, kwargs, is_hf))
-    hook_expected_1 = generate_expected_hookpoints(init_model(auto_hooked(module), kwargs, is_hf))
-    hook_expected_2 = generate_expected_hookpoints(auto_hooked(init_model(module, kwargs, is_hf)))
+    hook_expected_1 = generate_expected_hookpoints(init_model(auto_hook(module), kwargs, is_hf))
+    hook_expected_2 = generate_expected_hookpoints(auto_hook(init_model(module, kwargs, is_hf)))
     assert no_hook_expected == hook_expected_1 == hook_expected_2, "Expected hookpoints do not match"
