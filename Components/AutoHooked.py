@@ -6,6 +6,8 @@ import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
     Generator,
+    List,
+    Tuple,
     TypeVar, 
     Generic, 
     Union, 
@@ -67,20 +69,33 @@ def auto_hook(module: Union[T, P]) -> Union[HookedModule[T], HookedParameter]:
         )
     return Hooked
 
-
-class HookedParameter(HookedRootModule):
-    def __init__(self, parameter: nn.Parameter):
+class HookedParameter(nn.Parameter, HookedRootModule):
+    def __init__(self, parameter : nn.Parameter):
         super().__init__()
-        self.hook_point = HookPoint()
+        #nn.Parameter.__init__(self)
         self.param = parameter
+        self.hook_point = HookPoint()
         self.setup()
 
     def setup(self):
-        self.mod_dict = {'hook_point': self.hook_point, 'param': self.param}  # Add this line
+        self.mod_dict = {'param': self.param, 'hook_point': self.hook_point}
         self.hook_dict = {'hook_point': self.hook_point}
 
-    def unwrap(self) -> nn.Parameter:
-        return self.param
+    '''
+    #TODO
+    def __getattribute__(self, name):
+        try:
+            attr = super().__getattribute__(name)
+            if callable(attr) and name not in ['__class__', 'hook_point', '_apply_hook']:
+                @functools.wraps(attr)
+                def wrapped(*args, **kwargs):
+                    result = attr(*args, **kwargs)
+                    return self._apply_hook(result)
+                return wrapped
+            return attr
+        except AttributeError:
+            return getattr(self.param, name)'''
+
 
     def _apply_hook(self, result):
         return self.hook_point(result)
@@ -100,17 +115,20 @@ class HookedParameter(HookedRootModule):
     def __mul__(self, other):
         return self._apply_hook(self.param.__mul__(other))
 
-    def __rmul__(self, other):
-        return self._apply_hook(self.param.__rmul__(other))
+    def __matmul__(self, other):
+        return self._apply_hook(self.param.__matmul__(other))
 
+    def __rmatmul__(self, other):
+        return self._apply_hook(self.param.__rmatmul__(other))
+
+    def unwrap(self):
+        return nn.Parameter(self.data, requires_grad=self.requires_grad)
 
 class HookedModule(HookedRootModule, Generic[T]):
     def __init__(self, module: T):
         super().__init__()
         # NOTE we need to name it in this way to not 
         # to avoid infinite regress and override
-
-        
         self._module = module
         if not hasattr(self._module, 'hook_point'):
             self.hook_point = HookPoint()
@@ -127,11 +145,24 @@ class HookedModule(HookedRootModule, Generic[T]):
         self.mod_dict = {}
         self.hook_dict = {}
         for name, module in self.named_modules():
+            #print(f"wrapping module {name}")
             if name:
                 module.name = name
                 self.mod_dict[name] = module
                 if isinstance(module, HookPoint):
                     self.hook_dict[name] = module
+
+        if not any(isinstance(self._module, built_in_module) for built_in_module in BUILT_IN_MODULES):
+            for name, param in cast(
+                List[Tuple[str, HookedParameter]], self._module.named_parameters()
+            ):
+                print(f"wrapping param {name}, hook_point: {name}.hook_point")
+                prev_mod_dict = self.mod_dict.copy()
+                self.mod_dict[name] = param
+                hook_point_name = f'{name}.hook_point'
+                self.mod_dict[hook_point_name] = param.hook_point
+                self.hook_dict[hook_point_name] = param.hook_point
+                print("elements added", set(self.mod_dict.items()) - set(prev_mod_dict.items()))
 
     #NOTE a private method used to iterate ove
     def _module_iterator(
@@ -195,26 +226,25 @@ class HookedModule(HookedRootModule, Generic[T]):
                 setattr(self._module, name, unHooked_container)
             elif isinstance(submodule, HookedModule):
                 setattr(self._module, name, submodule.unwrap_instance())
+            elif isinstance(submodule, HookedParameter):
+                setattr(self._module, name, submodule.unwrap())
         return self._module        
 
     def _wrap_submodules(self):
-        parameter_hook_dict = {}
         if not any(isinstance(self._module, built_in_module) for built_in_module in BUILT_IN_MODULES):
             #RECURSE is set to false to avoid getting all sub params
             for name, submodule in self._module.named_parameters(recurse=False):
-                if isinstance(submodule, nn.Parameter):
+                #print(f"wrapping submodule name {name}, submodule: {type(submodule)}")
+                if isinstance(submodule, (nn.Parameter, torch.Tensor)):
                     #NOTE IT IS NOT EASY TO WRAP A HOOKPOINT AROUND NN.PARAMETER
                     #THIS IS CURRENTLY NOT SUPPORTED BUT WILL BE NEEDED TO SUPPORT
                     #NOTE we can still set the hookpoint, but it doesnt provide meaningful utility 
                     # as it is hard to wrap the output of NN.PARAMETER 
-                    parameter_hook_dict[f'{name}.hook_point'] = HookPoint()
-                    #setattr(self._module, f'{name}.hook_point', HookPoint()) 
-        
-            for hook_name, hook_point in parameter_hook_dict.items():
-                setattr(self._module, hook_name, hook_point)
+                    setattr(self._module, name, auto_hook(submodule))
+                else:
+                    raise ValueError(f"Submodule {name} is not a nn.Parameter or torch.Tensor")
 
         for name, submodule in self._module.named_children():
-            print(f"wrapping submodule name {name}, submodule: {submodule}")
             if isinstance(submodule, HookPoint):
                 continue
 
@@ -222,7 +252,7 @@ class HookedModule(HookedRootModule, Generic[T]):
                 Hooked_container = type(submodule)() #initialize the container
                 for i, m in enumerate(submodule):
                     Hooked_container.append(auto_hook(m))
-                print(f"setting attr {name} to {Hooked_container}")
+
                 setattr(self._module, name, Hooked_container)
             elif isinstance(submodule, nn.ModuleDict):
                 Hooked_container = type(submodule)()
