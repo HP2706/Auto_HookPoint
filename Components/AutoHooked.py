@@ -4,6 +4,7 @@ import itertools
 from torch import nn
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
+    Generator,
     TypeVar, 
     Generic, 
     Union, 
@@ -62,9 +63,6 @@ class HookedInstance(HookedRootModule, Generic[T]):
         self._wrap_submodules()
         self.setup()
 
-    def __iter__(self):
-        return iter(self._module)
-    
     def setup(self):
         '''
         Same as HookedRootModule.setup() except using self.modules() instead of self.named_modules() 
@@ -72,71 +70,60 @@ class HookedInstance(HookedRootModule, Generic[T]):
         '''
         self.mod_dict = {}
         self.hook_dict = {}
-        for name, module in self.modules():
-            print(f'setup recieving name: "{name}" module: {module}')
-            if name == "":
-                continue
-            module.name = name
-            self.mod_dict[name] = module
-            # TODO: is the bottom line the same as "if "HookPoint" in str(type(module)):"
-            if isinstance(module, HookPoint):
-                self.hook_dict[name] = module
+        for name, module in self.named_modules():
+            if name:
+                module.name = name
+                self.mod_dict[name] = module
+                if isinstance(module, HookPoint):
+                    self.hook_dict[name] = module
+
+    #NOTE a private method used to iterate ove
+    def _module_iterator(
+        self, 
+        use_names: bool = True, 
+        memo: Set[Module] | None = None, 
+        prefix: str = ''
+    ) -> Generator[Union[tuple[str, Module], Module], None, None]:
+        if memo is None:
+            memo = set()
+
+        if self not in memo:
+            memo.add(self)
+            yield (prefix, self) if use_names else self
+
+            for name, module in self._module.named_children():
+                if module not in memo:
+                    submodule_prefix = prefix + ('.' if prefix else '') + name
+                    if isinstance(module, HookedInstance):
+                        yield from module._module_iterator(use_names, memo, submodule_prefix)
+                    else:
+                        yield (submodule_prefix, module) if use_names else module
+                        if hasattr(module, 'named_modules'):
+                            yield from module.named_modules(memo, submodule_prefix)
+
+            if hasattr(self, 'hook_point'):
+                hook_point_prefix = prefix + ('.' if prefix else '') + 'hook_point'
+                yield (hook_point_prefix, self.hook_point) if use_names else self.hook_point
+
+    def named_modules(
+        self, 
+        memo: Set[Module] | None = None, 
+        prefix: str = '', 
+        remove_duplicate: bool = True
+    )-> Generator[tuple[str, Module], None, None]:
+        return self._module_iterator(use_names=True, memo=memo, prefix=prefix) #type: ignore
+
+    def modules(
+        self, 
+        memo: Set[Module] | None = None
+    ):
+        return self._module_iterator(use_names=False, memo=memo)
 
     def new_attr_fn(self, name: str) -> Any:
         return getattr(self._module, name)
     
     #NOTE we override the nn.Module implementation to use _module only
     #NOTE this is not an ideal approach b
-    def named_modules(self, memo: Set[Module] | None = None, prefix: str = '', remove_duplicate: bool = True):
-        #NOTE BE VERY CAREFUL HERE
-        
-        if memo is None:
-            memo = set()
-
-        if self not in memo:
-            memo.add(self)
-            yield prefix, self
-            #NOTE we dont need to iterate over the parameters here
-            #because we already did that in the __init__
-            for name, module in self._module.named_children():
-                if module not in memo:
-                    submodule_prefix = prefix + ('.' if prefix else '') + name
-                    if isinstance(module, HookedInstance):
-                        yield from module.named_modules(memo, submodule_prefix)
-                    else:
-                        yield submodule_prefix, module
-                        if hasattr(module, 'named_modules'):
-                            yield from module.named_modules(memo, submodule_prefix)
-
-            if hasattr(self, 'hook_point'):
-                hook_point_prefix = prefix + ('.' if prefix else '') + 'hook_point'
-                yield hook_point_prefix, self.hook_point
-
-    def modules(self, memo: Set[Module] | None = None, prefix: str = '', remove_duplicate: bool = True):
-        #NOTE BE VERY CAREFUL HERE
-
-        if memo is None:
-            memo = set()
-
-        if self not in memo:
-            memo.add(self)
-            yield prefix, self
-
-            #NOTE we dont need to iterate over the parameters here
-            #because we already did that in the __init__
-            for name, module in self._module.named_children():
-                if module not in memo:
-                    submodule_prefix = prefix + ('.' if prefix else '') + name
-                    if isinstance(module, HookedInstance):
-                        yield from module.modules(memo, submodule_prefix)
-                    else:
-                        yield submodule_prefix, module
-                        if hasattr(module, 'named_modules'):
-                            yield from module.named_modules(memo, submodule_prefix)
-
-            if hasattr(self, 'hook_point'):
-                hook_point_prefix = prefix + ('.' if prefix else '') + 'hook_point'
-                yield hook_point_prefix, self.hook_point
 
     def unwrap_instance(self) -> T:
         for name, submodule in self._module.named_children():
