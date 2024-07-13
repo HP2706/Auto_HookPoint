@@ -132,7 +132,7 @@ class HookedInstance(HookedRootModule, Generic[T]):
                     else:
                         yield submodule_prefix, module
                         if hasattr(module, 'named_modules'):
-                            yield from module._module.named_modules(memo, submodule_prefix)
+                            yield from module.named_modules(memo, submodule_prefix)
 
             if hasattr(self, 'hook_point'):
                 hook_point_prefix = prefix + ('.' if prefix else '') + 'hook_point'
