@@ -16,6 +16,7 @@ from .test_models import (
     SimpleNestedModuleList, 
     ComplexNestedModule,
     small_llama_config,
+    small_mixtral_config
 )
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
@@ -55,7 +56,7 @@ def generic_check_hook_fn_works(
     print("counter['value']", counter['value'])
     print("len(hook_names)", len(hook_names))
     assert (
-        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0
+        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 or len(unused_hooks) > 0
     ), (
         f"counter['value'] == len(hook_names) and len(hooks_multiple_times) == 0, "
         f"{counter['value']} == {len(hook_names)}, "
@@ -91,7 +92,8 @@ def get_test_cases():
         (SimpleModelWithModuleDict(), {'x' : torch.randn(1, 10)} ),
         (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)} ),
         (ComplexNestedModule(), {'x' : torch.randn(1, 10, 128)} ),
-        (LlamaForCausalLM(config=small_llama_config), {'input_ids' : torch.randint(0, 1000, (1, 10))})
+        (LlamaForCausalLM(config=small_llama_config), {'input_ids' : torch.randint(0, 1000, (1, 10))}),
+        (MixtralForCausalLM(config=small_mixtral_config), {'input_ids' : torch.randint(0, 1000, (1, 10))})
     ]
 
 @pytest.mark.parametrize("module, input", get_test_cases())

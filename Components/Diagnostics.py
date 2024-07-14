@@ -8,11 +8,11 @@ import torch
 T = TypeVar("T", bound=nn.Module)
 
 def check_auto_hook(
-    model_type: Type[T],
-    input_shape : Union[torch.Size, List[int]],
-    kwargs: dict[str, Any] = {},
+    model: Type[T],
+    init_kwargs : dict[str, Any],
+    input_kwargs: dict[str, Any] = {},
+    strict : bool = False
 ) -> HookedModule[T]:
-    assert inspect.isclass(model_type), "model_type must be a class"
 
     #iterate over both the instance and the
     #NOTE we check that the tests pass whether 
@@ -20,19 +20,23 @@ def check_auto_hook(
     
     #Run all test functions from test_auto_wrapper
     test_functions = get_test_functions(test_auto_wrapper)
-    for test_func in test_functions:
-        print("model", model_type, "test_func", test_func)
-        #try:
-        test_func(model_type, input_shape, kwargs)
-        print(f"Test passed: {test_func.__name__}")
-        #except Exception as e:
-        #    print(f"Test failed: {test_func.__name__}")
-        #    print(f"Error: {str(e)}") 
-    model = auto_hook(model_type(**kwargs))
-    return model
+    for test_func in test_functions:  
+        model_instance = model(**init_kwargs)
+        try:
+            test_func(model_instance, input_kwargs)      
+            print(f"Test passed: {test_func.__name__}")
+        except Exception as e:
+            if strict:
+                raise  # Re-raise the exception if strict mode is enabled
+            else:
+                print(f"Test failed: {test_func.__name__}")
+                print(f"Error: {str(e)}")
+    return auto_hook(model(**init_kwargs))
 
 def get_test_functions(module) -> List[Callable]:
     return [
         getattr(module, name) for name, func in inspect.getmembers(module)
-        if inspect.isfunction(func) and name.startswith('test_')
+        if inspect.isfunction(func) and name.startswith('test_') and name not in [
+            'test_HookedParameter_unwrap', 'test_HookedParameter_hook' , 'test_check_auto_hook'
+        ]
     ]

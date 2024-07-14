@@ -5,6 +5,19 @@ import torch.nn as nn
 import torch
 from transformers.models.llama import LlamaForCausalLM
 
+small_mixtral_config = MixtralConfig(
+    vocab_size=1000,
+    hidden_size=18,
+    intermediate_size=32,
+    num_hidden_layers=1,
+    num_attention_heads=1,
+    num_key_value_heads=1,
+    max_position_embeddings=512,
+    num_experts_per_tok=2,
+    num_local_experts=4,
+    attention_dropout=0.1,
+)
+
 small_llama_config = LlamaConfig(
     vocab_size=1000,
     hidden_size=8,
