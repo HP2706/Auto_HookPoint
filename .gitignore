@@ -3,7 +3,6 @@
 *.pth
 *.pickle
 *.pkl
-pixel
 test.ipynb
 main.py
 experiment.ipynb

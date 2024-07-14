@@ -1,9 +1,9 @@
-from Models import BaseTransformerConfig, VanillaTransformerBlock
 from transformers.models.llama import  LlamaConfig
 from transformers.models.mixtral import MixtralConfig
 import torch.nn as nn
 import torch
 from transformers.models.llama import LlamaForCausalLM
+
 
 small_mixtral_config = MixtralConfig(
     vocab_size=1000,
@@ -79,22 +79,30 @@ class SimpleNestedModuleList(nn.Module):
             x = module(x)
         return x
     
-class ComplexNestedModule(nn.Module):
-    def __init__(self):
+class AutoEncoder(nn.Module):
+    def __init__(self, cfg):
         super().__init__()
-        cfg = BaseTransformerConfig(
-            d_model = 128,
-            n_layers = 3,
-            num_heads = 4,
-            is_training=True,
-        )
-        self.cfg = cfg
-        self.bla = nn.ModuleList([VanillaTransformerBlock(cfg)])
+        d_hidden = cfg["d_mlp"] * cfg["dict_mult"]
+        d_mlp = cfg["d_mlp"]
+        l1_coeff = cfg["l1_coeff"]
+        dtype = torch.float32
+        torch.manual_seed(cfg["seed"])
+        self.W_enc = nn.Parameter(torch.nn.init.kaiming_uniform_(torch.empty(d_mlp, d_hidden, dtype=dtype)))
+        self.W_dec = nn.Parameter(torch.nn.init.kaiming_uniform_(torch.empty(d_hidden, d_mlp, dtype=dtype)))
+        self.b_enc = nn.Parameter(torch.zeros(d_hidden, dtype=dtype))
+        self.b_dec = nn.Parameter(torch.zeros(d_mlp, dtype=dtype))
 
-    def get_forward_shape(self):
-        return torch.Size([1, 10, self.cfg.d_model])
+        self.W_dec.data[:] = self.W_dec / self.W_dec.norm(dim=-1, keepdim=True)
+
+        self.d_hidden = d_hidden
+        self.l1_coeff = l1_coeff
 
     def forward(self, x):
-        for module in self.bla:
-            x = module(x)
-        return x
+        x_cent = x - self.b_dec
+        acts = torch.relu(x_cent @ self.W_enc + self.b_enc)
+        x_reconstruct = acts @ self.W_dec + self.b_dec
+        l2_loss = (x_reconstruct.float() - x.float()).pow(2).sum(-1).mean(0)
+        l1_loss = self.l1_coeff * (acts.float().abs().sum())
+        loss = l2_loss + l1_loss
+        return loss, x_reconstruct, acts, l2_loss, l1_loss
+    

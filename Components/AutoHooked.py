@@ -1,30 +1,23 @@
 from __future__ import annotations
 from inspect import isclass
-import itertools
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
     Generator,
-    List,
-    Tuple,
+    ParamSpec,
+    Protocol,
+    Type,
     TypeVar, 
     Generic, 
     Union, 
-    Type, 
     Any, 
-    Callable, 
     get_type_hints, 
-    ParamSpec, 
-    Optional, 
     Set, 
-    TypeVar, 
-    Type, 
-    Union, 
     cast, 
-    overload
+    overload,
+    runtime_checkable
 )
-from inspect import isclass
 import functools
 from torch.nn.modules.module import Module
 
@@ -39,32 +32,64 @@ BUILT_IN_MODULES = [
 T = TypeVar('T', bound=nn.Module)
 P = TypeVar('P', bound=nn.Parameter)
 
-@overload
-def auto_hook(module: T) -> HookedModule[T]:
-    ...
+
+
+class HookedClass(Generic[T, P]):    
+    def __init__(self, module_class : Union[Type[T], Type[P]]):
+        self.module_class = module_class
+
+    @overload
+    def __call__(self, *args: Any, **kwargs: Any) -> HookedModule[T]: ...
+    
+    @overload
+    def __call__(self, *args: Any, **kwargs: Any) -> HookedParameter: ...
+    
+    def __call__(self, *args: Any, **kwargs: Any) -> Union[HookedModule[T], HookedParameter]:
+        instance = self.module_class(*args, **kwargs)
+        return auto_hook(instance)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.module_class, name)
+
+    def unwrap(self) -> Union[Type[T], Type[P]]:
+        '''recursively unwraps the module class'''
+        return self.module_class
 
 @overload
-def auto_hook(module: P) -> HookedParameter:
-    ...
+def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
 
-def auto_hook(module: Union[T, P]) -> Union[HookedModule[T], HookedParameter]:
+@overload
+def auto_hook(module_or_class: T) -> HookedModule[T]:...
+
+@overload
+def auto_hook(module_or_class: P) -> HookedParameter:...
+
+@overload
+def auto_hook(module_or_class:Type[P]) -> HookedClass[P]:...
+
+def auto_hook(
+    module_or_class: Union[Type[T], T, Type[P], P]
+) -> Union[
+        HookedModule[T], HookedClass[T], HookedParameter, HookedClass[P]
+    ]:
     '''
     This function wraps either a module instance or a module class and returns a type that
     preserves the original module's interface plus an additional unwrap method.
     '''
-    assert not isinstance(module, HookedModule) or isinstance(module, HookedParameter), "Module is already hooked"
+    if isclass(module_or_class):
+        return HookedClass(module_or_class)
     
-    if isinstance(module, nn.Module):
-        Hooked = HookedModule(module) # type: ignore
+    if isinstance(module_or_class, nn.Module):
+        Hooked = HookedModule(module_or_class) # type: ignore
         #NOTE we set the unwrap method to just return module_or_class
-        Hooked.unwrap = lambda: module # type: ignore
+        Hooked.unwrap = lambda: module_or_class # type: ignore
         Hooked = cast(HookedModule[T], Hooked)
-    elif isinstance(module, (nn.Parameter, torch.Tensor)):
-        Hooked = HookedParameter(module) # type: ignore
+    elif isinstance(module_or_class, (nn.Parameter, torch.Tensor)):
+        Hooked = HookedParameter(module_or_class) # type: ignore
         Hooked = cast(HookedModule[T], Hooked)
     else:
         raise ValueError(
-            f"Module type {type(module)} is not supported should, "
+            f"Module type {type(module_or_class)} is not supported should, "
             "be one of nn.Module or nn.Parameter/torch.Tensor"
         )
     return Hooked
