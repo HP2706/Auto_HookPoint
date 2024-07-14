@@ -32,8 +32,6 @@ BUILT_IN_MODULES = [
 T = TypeVar('T', bound=nn.Module)
 P = TypeVar('P', bound=nn.Parameter)
 
-
-
 class HookedClass(Generic[T, P]):    
     def __init__(self, module_class : Union[Type[T], Type[P]]):
         self.module_class = module_class
@@ -100,50 +98,32 @@ class HookedParameter(nn.Parameter, HookedRootModule):
         #nn.Parameter.__init__(self)
         self.param = parameter
         self.hook_point = HookPoint()
+        self._wrap_math_ops()
         self.setup()
+    
+    def _wrap_math_ops(self):
+        math_ops = [
+            '__add__', '__radd__', '__sub__', '__rsub__', '__mul__', '__rmul__',
+            '__matmul__', '__rmatmul__', '__truediv__', '__rtruediv__', '__floordiv__',
+            '__rfloordiv__', '__mod__', '__rmod__', '__pow__', '__rpow__', '__neg__', '__abs__'
+        ]
+        for op in math_ops:
+            if hasattr(self, op):
+                setattr(self.__class__, op, self._create_wrapped_op(op))
+
+    def _create_wrapped_op(self, op_name):
+        def wrapped_op(self, other):
+            result = getattr(super(HookedParameter, self), op_name)(other)
+            return self.hook_point(result)  # Apply the hook
+        return wrapped_op
+
+    def _apply_hook(self, x):
+        return self.hook_point(x)
+
 
     def setup(self):
         self.mod_dict = {'param': self.param, 'hook_point': self.hook_point}
         self.hook_dict = {'hook_point': self.hook_point}
-
-    '''
-    #TODO
-    def __getattribute__(self, name):
-        try:
-            attr = super().__getattribute__(name)
-            if callable(attr) and name not in ['__class__', 'hook_point', '_apply_hook']:
-                @functools.wraps(attr)
-                def wrapped(*args, **kwargs):
-                    result = attr(*args, **kwargs)
-                    return self._apply_hook(result)
-                return wrapped
-            return attr
-        except AttributeError:
-            return getattr(self.param, name)'''
-
-    def _apply_hook(self, result):
-        return self.hook_point(result)
-
-    def __add__(self, other):
-        return self._apply_hook(self.param.__add__(other))
-
-    def __radd__(self, other):
-        return self._apply_hook(self.param.__radd__(other))
-
-    def __sub__(self, other):
-        return self._apply_hook(self.param.__sub__(other))
-
-    def __rsub__(self, other):
-        return self._apply_hook(self.param.__rsub__(other))
-
-    def __mul__(self, other):
-        return self._apply_hook(self.param.__mul__(other))
-
-    def __matmul__(self, other):
-        return self._apply_hook(self.param.__matmul__(other))
-
-    def __rmatmul__(self, other):
-        return self._apply_hook(self.param.__rmatmul__(other))
 
     def unwrap(self):
         return nn.Parameter(self.data, requires_grad=self.requires_grad)

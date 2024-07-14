@@ -34,6 +34,10 @@ def generic_check_hook_fn_works(
     model : T, 
     input : Dict[str, torch.Tensor]
 ):
+    #NOTE this test is a bit cursed, is there a way to check that all 
+    # the hooks that are part of the call graph are called?? instead of using heuristics
+    # it is perfectly normal that some hooks are not called for instance if the model is sparse
+    
     counter = {'value': 0, 'hooks' :[]} #GLOBAL state
 
     def print_shape(x, hook=None, hook_name=None):
@@ -43,7 +47,6 @@ def generic_check_hook_fn_works(
         return x
 
     hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
-    print("inp_tensor", input)
 
     model.run_with_hooks(
         **input,
@@ -53,8 +56,6 @@ def generic_check_hook_fn_works(
     #hooks not used
     unused_hooks = set(hook_names) - set(counter['hooks'])
     hooks_multiple_times = list(set([hook for hook in counter['hooks'] if counter['hooks'].count(hook) > 1]))
-    print("counter['value']", counter['value'])
-    print("len(hook_names)", len(hook_names))
     assert (
         counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 or len(unused_hooks) > 0
     ), (
