@@ -5,8 +5,11 @@ import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
     Generator,
+    Iterator,
+    Optional,
     ParamSpec,
     Protocol,
+    Tuple,
     Type,
     TypeVar, 
     Generic, 
@@ -31,8 +34,9 @@ BUILT_IN_MODULES = [
 
 T = TypeVar('T', bound=nn.Module)
 P = TypeVar('P', bound=nn.Parameter)
+B = TypeVar('B', bound=Union[nn.Module, nn.Parameter])
 
-class HookedClass(Generic[T, P]):    
+class HookedClass(Generic[B]):    
     def __init__(self, module_class : Union[Type[T], Type[P]]):
         self.module_class = module_class
 
@@ -40,18 +44,18 @@ class HookedClass(Generic[T, P]):
     def __call__(self, *args: Any, **kwargs: Any) -> HookedModule[T]: ...
     
     @overload
-    def __call__(self, *args: Any, **kwargs: Any) -> HookedParameter: ...
+    def __call__(self, *args: Any, **kwargs: Any) -> HookedParameter[P]: ...
     
-    def __call__(self, *args: Any, **kwargs: Any) -> Union[HookedModule[T], HookedParameter]:
+    def __call__(self, *args: Any, **kwargs: Any) -> Union[HookedModule[T], HookedParameter[P]]:
         instance = self.module_class(*args, **kwargs)
-        return auto_hook(instance)
+        return cast(Union[HookedModule[T], HookedParameter[P]], auto_hook(instance))
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.module_class, name)
 
-    def unwrap(self) -> Union[Type[T], Type[P]]:
+    def unwrap(self) -> Type[B]:
         '''recursively unwraps the module class'''
-        return self.module_class
+        return cast(Type[B], self.module_class)
 
 @overload
 def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
@@ -60,7 +64,7 @@ def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
 def auto_hook(module_or_class: T) -> HookedModule[T]:...
 
 @overload
-def auto_hook(module_or_class: P) -> HookedParameter:...
+def auto_hook(module_or_class: P) -> HookedParameter[P]:...
 
 @overload
 def auto_hook(module_or_class:Type[P]) -> HookedClass[P]:...
@@ -72,7 +76,7 @@ def auto_hook(
     ]:
     '''
     This function wraps either a module instance or a module class and returns a type that
-    preserves the original module's interface plus an additional unwrap method.
+    preserves the original module/Parameters interface but adds a hook_point to all nn.Module and select torch.nn.Parameter classes
     '''
     if isclass(module_or_class):
         return HookedClass(module_or_class)
@@ -83,8 +87,7 @@ def auto_hook(
         Hooked.unwrap = lambda: module_or_class # type: ignore
         Hooked = cast(HookedModule[T], Hooked)
     elif isinstance(module_or_class, (nn.Parameter, torch.Tensor)):
-        Hooked = HookedParameter(module_or_class) # type: ignore
-        Hooked = cast(HookedModule[T], Hooked)
+        Hooked = cast(HookedParameter[P], HookedParameter(module_or_class)) # type: ignore
     else:
         raise ValueError(
             f"Module type {type(module_or_class)} is not supported should, "
@@ -92,10 +95,9 @@ def auto_hook(
         )
     return Hooked
 
-class HookedParameter(nn.Parameter, HookedRootModule):
-    def __init__(self, parameter : nn.Parameter):
+class HookedParameter(nn.Parameter, HookedRootModule, Generic[P]):
+    def __init__(self, parameter : P):
         super().__init__()
-        #nn.Parameter.__init__(self)
         self.param = parameter
         self.hook_point = HookPoint()
         self._wrap_math_ops()
@@ -120,13 +122,12 @@ class HookedParameter(nn.Parameter, HookedRootModule):
     def _apply_hook(self, x):
         return self.hook_point(x)
 
-
     def setup(self):
         self.mod_dict = {'param': self.param, 'hook_point': self.hook_point}
         self.hook_dict = {'hook_point': self.hook_point}
 
-    def unwrap(self):
-        return nn.Parameter(self.data, requires_grad=self.requires_grad)
+    def unwrap(self) -> P:
+        return cast(P, nn.Parameter(self.data, requires_grad=self.requires_grad))
 
 class HookedModule(HookedRootModule, Generic[T]):
     def __init__(self, module: T):
@@ -136,126 +137,82 @@ class HookedModule(HookedRootModule, Generic[T]):
         self._module = module
         if not hasattr(self._module, 'hook_point'):
             self.hook_point = HookPoint()
-        
+        super().named_children()
         self._create_forward()
         self._wrap_submodules()
         self.setup()
 
     def setup(self):
-        '''
-        Same as HookedRootModule.setup() except using self.modules() instead of self.named_modules() 
-        to avoid overwriting pytorch's named_modules()
-        '''
         self.mod_dict = {}
         self.hook_dict = {}
         
         if hasattr(self, 'hook_point'):
-            self.mod_dict['hook_point'] = self.hook_point
-            self.hook_dict['hook_point'] = self.hook_point
+            self.mod_dict['hook_point'] = self.hook_dict['hook_point'] = self.hook_point
         
-        def add_module_and_params(module, prefix=''):
-            for name, child_module in module.named_children():
+        def add_module_and_params(module : nn.Module, prefix=''):
+            for name, child in module.named_children():
                 full_name = f"{prefix}.{name}" if prefix else name
-                self.mod_dict[full_name] = child_module
-                if isinstance(child_module, HookedModule):
-                    self.mod_dict[f"{full_name}.hook_point"] = child_module.hook_point
-                    self.hook_dict[f"{full_name}.hook_point"] = child_module.hook_point
-                    add_module_and_params(child_module._module, full_name)
-                elif isinstance(child_module, HookPoint):
-                    self.hook_dict[full_name] = child_module
+                self.mod_dict[full_name] = child
+                
+                if isinstance(child, HookedModule):
+                    hook_point_name = f"{full_name}.hook_point"
+                    
+                    self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = child.hook_point
+                    add_module_and_params(child._module, full_name)
+                elif isinstance(child, HookPoint):
+                    self.hook_dict[full_name] = child
                 else:
-                    add_module_and_params(child_module, full_name)
+                    add_module_and_params(child, full_name)
             
             for name, param in module.named_parameters(recurse=False):
                 full_name = f"{prefix}.{name}" if prefix else name
                 if isinstance(param, HookedParameter):
                     self.mod_dict[full_name] = param
+                    
                     hook_point_name = f'{full_name}.hook_point'
-                    self.mod_dict[hook_point_name] = param.hook_point
-                    self.hook_dict[hook_point_name] = param.hook_point
+                    self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = param.hook_point
 
         add_module_and_params(self._module)
 
-    def _parameter_iterator(
+    def _named_modules(
         self, 
-        use_names: bool = True, 
-        memo: Set[Module] | None = None, 
-        prefix: str = ''
-    ): #-> Generator[Union[tuple[str, nn.Parameter], nn.Parameter], None, None]:
-        if memo is None:
-            memo = set()
-
-        if self not in memo:
-            memo.add(self)
-            yield (prefix, self) if use_names else self
-
-            for name, module in self._module.named_parameters():
-                print(f"iterating over module {name}, type: {type(module)}")
-                if module not in memo and isinstance(module, HookedParameter):
-                    print(f"iterating over inner module {name}, type: {type(module)}")
-                    for inner_name, inner_module in module.mod_dict.items():
-                        inner_prefix = prefix + ('.' if prefix else '') + name + ('.' if name else '') + inner_name
-                        yield (inner_prefix, inner_module) if use_names else inner_module
-                
-    #NOTE a private method used to iterate ove
-    def _module_iterator(
-        self, 
-        use_names: bool = True, 
-        memo: Set[Module] | None = None, 
-        prefix: str = ''
-    ) -> Generator[Union[tuple[str, Module], Module], None, None]:
-        if memo is None:
-            memo = set()
-
-        if self not in memo:
-            memo.add(self)
-            yield (prefix, self) if use_names else self
-
-            for name, module in self._module.named_children():
-                if module not in memo:
-                    submodule_prefix = prefix + ('.' if prefix else '') + name
-                    if isinstance(module, HookedModule):
-                        yield from module._module_iterator(use_names, memo, submodule_prefix)
-                    else:
-                        yield (submodule_prefix, module) if use_names else module
-                        if hasattr(module, 'named_modules'):
-                            yield from module.named_modules(memo, submodule_prefix)
-
-            if hasattr(self, 'hook_point'):
-                hook_point_prefix = prefix + ('.' if prefix else '') + 'hook_point'
-                yield (hook_point_prefix, self.hook_point) if use_names else self.hook_point
-
-    def named_modules(
-        self, 
-        memo: Set[Module] | None = None, 
+        memo: Optional[Set['Module']] = None, 
         prefix: str = '', 
         remove_duplicate: bool = True
-    )-> Generator[tuple[str, Module], None, None]:
-        return self._module_iterator(use_names=True, memo=memo, prefix=prefix) #type: ignore
+    )-> Generator[Union[tuple[str, Module], Module], None, None]:
+        if memo is None:
+            memo = set()
+        if self not in memo:
+            if remove_duplicate:
+                memo.add(self)
+            yield prefix, self
+            for name, module in self._module._modules.items():
+                if module is None:
+                    continue
+                submodule_prefix = prefix + ('.' if prefix else '') + name
+                #print("yielding", list(module.named_modules(memo, submodule_prefix, remove_duplicate)))
+                yield from module.named_modules(memo, submodule_prefix, remove_duplicate)
 
-    def modules(
-        self, 
-        memo: Set[Module] | None = None
-    ):
-        return self._module_iterator(use_names=False, memo=memo)
-    
     #NOTE we override the nn.Module implementation to use _module only
     #NOTE this is not an ideal approach b
 
-    def unwrap_instance(self) -> T:
+    def unwrap(self) -> T:
+        '''
+        This method recursively unwraps the HookedModule and returns the original module
+        '''
         for name, submodule in self._module.named_children():
             if isinstance(submodule, (nn.ModuleList, nn.Sequential)):
                 unHooked_container = type(submodule)()
                 for m in submodule:
-                    unHooked_container.append(m.unwrap_instance() if isinstance(m, HookedModule) else m)
+                    unHooked_container.append(m.unwrap() if isinstance(m, HookedModule) else m)
                 setattr(self._module, name, unHooked_container)
             elif isinstance(submodule, nn.ModuleDict):
                 unHooked_container = type(submodule)()
                 for key, m in submodule.items():
-                    unHooked_container[key] = m.unwrap_instance() if isinstance(m, HookedModule) else m
+                    unHooked_container[key] = m.unwrap() if isinstance(m, HookedModule) else m
                 setattr(self._module, name, unHooked_container)
             elif isinstance(submodule, HookedModule):
-                setattr(self._module, name, submodule.unwrap_instance())
+                setattr(self._module, name, submodule.unwrap())
             elif isinstance(submodule, HookedParameter): 
                 ##TODO this is not correct as submodule is not a module and will not be in named_children
                 setattr(self._module, name, submodule.unwrap())

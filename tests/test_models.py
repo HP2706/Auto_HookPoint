@@ -79,6 +79,8 @@ class SimpleNestedModuleList(nn.Module):
             x = module(x)
         return x
     
+# take from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
+# this is used to show that we can hook models that only use nn.Parameter
 class AutoEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -104,5 +106,5 @@ class AutoEncoder(nn.Module):
         l2_loss = (x_reconstruct.float() - x.float()).pow(2).sum(-1).mean(0)
         l1_loss = self.l1_coeff * (acts.float().abs().sum())
         loss = l2_loss + l1_loss
-        return loss, x_reconstruct, acts, l2_loss, l1_loss
+        return loss
     

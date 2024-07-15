@@ -1,8 +1,5 @@
 from typing import Iterable, Tuple, Union
-from transformer_lens.hook_points import HookPoint
-import warnings
 from torch import nn
-import inspect
 
 def iterate_module(
     module : Union[nn.ModuleList, nn.Sequential, nn.ModuleDict]

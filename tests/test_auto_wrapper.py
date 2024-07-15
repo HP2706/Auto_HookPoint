@@ -2,6 +2,7 @@ from inspect import isclass
 from typing import Any, Dict, List, Optional, Tuple, Protocol, Type, TypeVar, Union
 from Components.AutoHooked import HookedModule, auto_hook
 from transformer_lens.hook_points import HookPoint
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from test_utils import (
     generate_expected_hookpoints, 
     get_duplicates, 
@@ -30,18 +31,66 @@ def check_hook_types(
 ):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
-def generic_check_hook_fn_works(
+
+def generic_check_hook_fn_bwd_works(
+    model : T, 
+    input : Dict[str, torch.Tensor]
+):
+    counter = {'value': 0, 'hooks' :[]} #GLOBAL state
+    
+    def skip_grad(output_grad: torch.Tensor, hook: Any, hook_name : str = ''):
+        counter['value'] += 1
+        return (output_grad,)
+
+    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    output = model.run_with_hooks(**input, bwd_hooks=[('hook_point', partial(skip_grad, hook_name=name)) for name in model.hook_dict.keys()])
+
+    print('output', output)
+    if isinstance(output, torch.Tensor):
+        if output.shape != []:
+            loss = output.sum()
+        else:
+            loss = output
+    elif isinstance(output, CausalLMOutputWithPast):
+        loss = output.loss
+    else:
+        for elm in output:
+            if isinstance(elm, torch.Tensor) and elm.requires_grad:
+                if elm.shape != []:
+                    loss = elm.sum()  # Reduce to scalar
+                else:
+                    loss = elm
+                break
+        else:
+            raise ValueError("No suitable tensor found for backward pass")
+
+        
+    loss.backward()
+    #hooks not used
+    unused_hooks = set(hook_names) - set(counter['hooks'])
+    hooks_multiple_times = list(set([hook for hook in counter['hooks'] if counter['hooks'].count(hook) > 1]))
+    assert (
+        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 #or len(unused_hooks) > 0
+    ), (
+        f"counter['value'] == len(hook_names) and len(hooks_multiple_times) == 0, "
+        f"{counter['value']} == {len(hook_names)}, "
+        f"{hook_names} unused: {unused_hooks} "
+        f"hooks called multiple times: {hooks_multiple_times}"
+    )
+    print("TEST PASSED")
+
+
+def generic_check_hook_fn_fwd_works(
     model : T, 
     input : Dict[str, torch.Tensor]
 ):
     #NOTE this test is a bit cursed, is there a way to check that all 
     # the hooks that are part of the call graph are called?? instead of using heuristics
     # it is perfectly normal that some hooks are not called for instance if the model is sparse
-    
+
     counter = {'value': 0, 'hooks' :[]} #GLOBAL state
 
     def print_shape(x, hook=None, hook_name=None):
-        print(f"HOOK NAME: {hook_name}")
         counter['value'] += 1
         counter['hooks'].append(hook_name)
         return x
@@ -50,14 +99,14 @@ def generic_check_hook_fn_works(
 
     model.run_with_hooks(
         **input,
-        fwd_hooks=[(hook_name, partial(print_shape, hook_name=hook_name)) for hook_name in hook_names]
+        fwd_hooks=[(hook_name, partial(print_shape, hook_name=hook_name)) for hook_name in hook_names],
     )
 
     #hooks not used
     unused_hooks = set(hook_names) - set(counter['hooks'])
     hooks_multiple_times = list(set([hook for hook in counter['hooks'] if counter['hooks'].count(hook) > 1]))
     assert (
-        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 or len(unused_hooks) > 0
+        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 #or len(unused_hooks) > 0
     ), (
         f"counter['value'] == len(hook_names) and len(hooks_multiple_times) == 0, "
         f"{counter['value']} == {len(hook_names)}, "
@@ -98,12 +147,21 @@ def get_test_cases():
     ]
 
 @pytest.mark.parametrize("module, input", get_test_cases())
-def test_hook_fn_works(
+def test_hook_fn_fwd_works(
     module: T, 
     input : Dict[str, torch.Tensor]
 ):
     model = auto_hook(module)
-    generic_check_hook_fn_works(model, input)
+    generic_check_hook_fn_fwd_works(model, input)
+"""
+#TODO
+@pytest.mark.parametrize("module, input", get_test_cases())
+def test_hook_fn_bwd_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model = auto_hook(module)
+    generic_check_hook_fn_bwd_works(model, input)"""
 
 @pytest.mark.parametrize("module, _", get_test_cases())
 def test_check_all_hooks(
@@ -119,7 +177,7 @@ def test_check_unwrap_works(
     _,
 ):
     model = auto_hook(module)
-    unwrapped = model.unwrap_instance()
+    unwrapped = model.unwrap()
     assert unwrapped == module, f"Unwrapped {unwrapped} is not the same as the original {module}"
     
 @pytest.mark.parametrize("module, _ ", get_test_cases())
@@ -170,7 +228,7 @@ def test_HookedParameter_hook(
         return x
     
     model.add_hook('hook_point', partial(print_shape, hook_name='hook_point')) #type: ignore
-    model*1
+    model*1 # we multiply to test if the math ops methods are hooked correctly
     assert counter['value'] == 1, f"Counter value is not 1, {counter['value']}"
     assert counter['hooks'] == ['hook_point'], f"Hooks are not ['hook_point'], {counter['hooks']}"
     assert counter['shape'] == x.shape, f"Shape is not the same, {counter['shape']} != {x.shape}"

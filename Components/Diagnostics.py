@@ -9,8 +9,8 @@ T = TypeVar("T", bound=nn.Module)
 
 def check_auto_hook(
     model: Type[T],
-    init_kwargs : dict[str, Any],
-    input_kwargs: dict[str, Any] = {},
+    input_kwargs: dict[str, Any],
+    init_kwargs : dict[str, Any] = {},
     strict : bool = False
 ) -> HookedModule[T]:
 
