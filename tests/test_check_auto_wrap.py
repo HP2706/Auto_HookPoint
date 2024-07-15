@@ -35,4 +35,5 @@ def test_check_auto_hook(
     init_kwargs : Dict[str, Any],
     input_kwargs : Dict[str, torch.Tensor]
 ):
+    
     check_auto_hook(module, input_kwargs, init_kwargs, strict=True)

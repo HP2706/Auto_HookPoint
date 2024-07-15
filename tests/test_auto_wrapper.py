@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Components.AutoHooked import auto_hook
 from transformer_lens.hook_points import HookPoint
 from transformers.utils.generic import ModelOutput
-from test_utils import (
+from tests.test_utils import (
     generate_expected_hookpoints, 
     get_duplicates, 
 )
@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .test_models import get_test_cases
+from .test_models import get_test_cases, get_base_cases, get_hf_cases
 #for testing 
 
 T = TypeVar('T', bound=nn.Module)
@@ -28,14 +28,9 @@ def generic_hook_check(
     is_backward: bool
 ):
     counter = {'value': 0, 'hooks': []}
-    
-    def hook_wrapper(x, hook=None, hook_name=None):
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        return hook_fn(x, hook, hook_name)
 
     hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
-    hooks = [(name, partial(hook_wrapper, hook_name=name)) for name in hook_names]
+    hooks = [(name, partial(hook_fn, hook_name=name)) for name in hook_names]
     
     if is_backward:
         output = model.run_with_hooks(**input, bwd_hooks=hooks)
@@ -119,7 +114,38 @@ def test_hook_fn_fwd_works(
     model = auto_hook(module)
     generic_check_hook_fn_fwd_works(model, input)
 
-#TODO
+
+@pytest.mark.parametrize("module, input", get_base_cases())
+def test_fwd_hook_fn_edit(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model = auto_hook(module)
+    
+    def hook_wrapper(x, hook=None, hook_name=None) -> torch.Tensor:
+        if isinstance(x, tuple):
+            return tuple(g + 1 for g in x if isinstance(g, torch.Tensor))
+        elif isinstance(x, torch.Tensor):
+            return x + 1
+        else:
+            return x
+    
+    
+    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hooks = [(name, partial(hook_wrapper, hook_name=name)) for name in hook_names]
+    
+    # Run model with hooks
+    output_with_hooks = model.run_with_hooks(**input, fwd_hooks=hooks)
+    
+    # Run model without hooks
+    output_without_hooks = model(**input)
+    
+    # Check if the difference is equal to the number of hooks
+    diff = output_with_hooks - output_without_hooks
+    
+    assert torch.all(diff != 0), f"Expected non-zero difference for all elements, but got: {diff}"
+    print(f"Test passed. Difference: {diff}")
+
 @pytest.mark.parametrize("module, input", get_test_cases())
 def test_hook_fn_bwd_works(
     module: T, 

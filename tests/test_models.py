@@ -5,16 +5,25 @@ import torch
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
 
-
-#module instance, input 
-def get_test_cases():
+def get_base_cases():
     return [
         (SimpleModule(), {'x' : torch.randn(1, 10)}),
         (AutoEncoder(cfg = {"d_mlp": 10, "dict_mult": 1, "l1_coeff": 1, "seed": 1}), {'x' : torch.randn(1, 10)}),
         (SimpleModelWithModuleDict(), {'x' : torch.randn(1, 10)}),
-        (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)}),
+        (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)})
+    ]
+
+def get_hf_cases():
+    return [
         (LlamaForCausalLM(config=small_llama_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True}),
         (MixtralForCausalLM(config=small_mixtral_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True})
+    ]
+
+#module instance, input 
+def get_test_cases():
+    return [
+        *get_base_cases(),
+        *get_hf_cases()
     ]
 
 
@@ -116,8 +125,5 @@ class AutoEncoder(nn.Module):
         x_cent = x - self.b_dec
         acts = torch.relu(x_cent @ self.W_enc + self.b_enc)
         x_reconstruct = acts @ self.W_dec + self.b_dec
-        l2_loss = (x_reconstruct.float() - x.float()).pow(2).sum(-1).mean(0)
-        l1_loss = self.l1_coeff * (acts.float().abs().sum())
-        loss = l2_loss + l1_loss
-        return loss
+        return x_reconstruct
     
