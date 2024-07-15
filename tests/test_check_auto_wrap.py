@@ -1,5 +1,4 @@
 from Components.Diagnostics import check_auto_hook
-from Components.AutoHooked import auto_hook
 from .test_models import (
     AutoEncoder,
     SimpleModule, 
@@ -23,8 +22,8 @@ def get_test_cases():
         (AutoEncoder, {'cfg' : {'d_mlp': 10, 'dict_mult': 1, 'l1_coeff': 1, 'seed': 1}}, {'x' : torch.randn(1, 10)}),
         (SimpleModelWithModuleDict, {}, {'x' : torch.randn(1, 10)}),
         (SimpleNestedModuleList, {}, {'x' : torch.randn(1, 10)}),
-        (LlamaForCausalLM, {'config' : small_llama_config}, {'input_ids' : torch.randint(0, 1000, (1, 10))}),
-        (MixtralForCausalLM, {'config' : small_mixtral_config}, {'input_ids' : torch.randint(0, 1000, (1, 10))})
+        (LlamaForCausalLM, {'config' : small_llama_config}, {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True}),
+        (MixtralForCausalLM, {'config' : small_mixtral_config}, {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True})
     ]
 
 @pytest.mark.parametrize(

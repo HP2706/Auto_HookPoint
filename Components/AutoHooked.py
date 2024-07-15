@@ -1,5 +1,6 @@
 from __future__ import annotations
 from inspect import isclass
+import warnings
 from torch import nn
 import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
@@ -80,6 +81,9 @@ def auto_hook(
     '''
     if isclass(module_or_class):
         return HookedClass(module_or_class)
+    if isinstance(module_or_class, (HookedClass, HookedModule, HookedParameter)):
+        warnings.warn(f"auto_hook is called with a {type(module_or_class).__name__} instance, returning the original")
+        return module_or_class
     
     if isinstance(module_or_class, nn.Module):
         Hooked = HookedModule(module_or_class) # type: ignore

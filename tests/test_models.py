@@ -3,6 +3,19 @@ from transformers.models.mixtral import MixtralConfig
 import torch.nn as nn
 import torch
 from transformers.models.llama import LlamaForCausalLM
+from transformers.models.mixtral import MixtralForCausalLM
+
+
+#module instance, input 
+def get_test_cases():
+    return [
+        (SimpleModule(), {'x' : torch.randn(1, 10)}),
+        (AutoEncoder(cfg = {"d_mlp": 10, "dict_mult": 1, "l1_coeff": 1, "seed": 1}), {'x' : torch.randn(1, 10)}),
+        (SimpleModelWithModuleDict(), {'x' : torch.randn(1, 10)}),
+        (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)}),
+        (LlamaForCausalLM(config=small_llama_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True}),
+        (MixtralForCausalLM(config=small_mixtral_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True})
+    ]
 
 
 small_mixtral_config = MixtralConfig(
