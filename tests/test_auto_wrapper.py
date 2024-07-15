@@ -146,6 +146,38 @@ def test_fwd_hook_fn_edit(
     assert torch.all(diff != 0), f"Expected non-zero difference for all elements, but got: {diff}"
     print(f"Test passed. Difference: {diff}")
 
+@pytest.mark.parametrize("module, input", get_base_cases())
+def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
+    model = auto_hook(module)
+
+    def backward_hook(grad_output, hook=None, hook_name: str = ''):
+        if isinstance(grad_output, tuple):
+            return tuple(g * 2 if isinstance(g, torch.Tensor) and g.requires_grad else g for g in grad_output)
+        return (grad_output * 2,) if isinstance(grad_output, torch.Tensor) else (grad_output,)
+    
+    def get_grad_dict(loss):
+        loss.backward()
+        grad_dict = {name: param.grad.clone() if param.grad is not None else None 
+                     for name, param in model.named_parameters()}
+        model.zero_grad()
+        return grad_dict
+
+    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hooks = [(name, partial(backward_hook, hook_name=name)) for name in hook_names]
+    
+    # No hooks forward pass
+    no_hook_grad_dict = get_grad_dict(get_loss(model.forward(**input)))
+
+    # Forward pass with hooks
+    hook_grad_dict = get_grad_dict(get_loss(model.run_with_hooks(**input, bwd_hooks=hooks)))
+
+    for name, param in model.named_parameters():
+        #we check that the gradients are not the same
+        #TODO make a better test
+        assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
+        
+
+
 @pytest.mark.parametrize("module, input", get_test_cases())
 def test_hook_fn_bwd_works(
     module: T, 
