@@ -1,4 +1,3 @@
-```markdown
 # AutoHooked
 
 AutoHooked is a Python library that makes it possible to use arbitrary models in transformer_lens. 
@@ -12,7 +11,7 @@ This happens via an auto_hook function that wraps your pytorch model and applies
 ## Installation
 
 ```bash
-pip install autohooked
+pip install AutoHook
 ```
 
 ## Usage
@@ -122,7 +121,9 @@ you can test that the tests pass by running:
 ```python
 from AutoHooked import check_auto_hook
 hooked_model = auto_hook(model)
-check_auto_hook(hooked_model, strict=False)
+input_kwargs = {'x': torch.randn(10, 10)}
+init_kwargs = {'cfg': {'d_mlp': 10, 'dict_mult': 10, 'l1_coeff': 10, 'seed': 1}}
+check_auto_hook(AutoEncoder, input_kwargs, init_kwargs)
 ```
 this will run the test suite on the new model and can provide some information about if the model is hooked correctly. 
 

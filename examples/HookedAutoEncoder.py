@@ -9,7 +9,7 @@ import torch
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from AutoHook import auto_hook
+from Auto_Hook import auto_hook, check_auto_hook
 from transformer_lens.hook_points import HookPoint
 
 # example implementation taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
@@ -41,3 +41,6 @@ class AutoEncoder(nn.Module):
 autoencoder = auto_hook(AutoEncoder({"d_mlp": 10, "dict_mult": 10, "l1_coeff": 10, "seed": 1}))
 print(autoencoder.hook_dict.items())
 # dict_items([('hook_point', HookPoint()), ('W_enc.hook_point', HookPoint()), ('W_dec.hook_point', HookPoint()), ('b_enc.hook_point', HookPoint()), ('b_dec.hook_point', HookPoint())])
+input_kwargs = {'x': torch.randn(10, 10)}
+init_kwargs = {'cfg': {'d_mlp': 10, 'dict_mult': 10, 'l1_coeff': 10, 'seed': 1}}
+check_auto_hook(AutoEncoder, input_kwargs, init_kwargs)

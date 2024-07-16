@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from AutoHook.check import check_auto_hook
+from Auto_Hook.check import check_auto_hook
 from .test_models import (
     AutoEncoder,
     SimpleModule, 
