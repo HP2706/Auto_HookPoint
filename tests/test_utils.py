@@ -1,7 +1,7 @@
 from torch import nn
 from utils import iterate_module
 from transformer_lens.hook_points import HookPoint
-from Components.AutoHooked import HookedModule, auto_hook, BUILT_IN_MODULES
+from src.AutoHooked import HookedModule, auto_hook, BUILT_IN_MODULES
 from typing import Any, List, Union
 from collections import Counter
 from typing import TypeVar, Type

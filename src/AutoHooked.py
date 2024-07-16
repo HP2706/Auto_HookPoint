@@ -6,11 +6,7 @@ import torch
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
     Generator,
-    Iterator,
     Optional,
-    ParamSpec,
-    Protocol,
-    Tuple,
     Type,
     TypeVar, 
     Generic, 
@@ -20,7 +16,6 @@ from typing import (
     Set, 
     cast, 
     overload,
-    runtime_checkable
 )
 import functools
 from torch.nn.modules.module import Module
@@ -36,9 +31,8 @@ BUILT_IN_MODULES = [
 T = TypeVar('T', bound=nn.Module)
 P = TypeVar('P', bound=nn.Parameter)
 B = TypeVar('B', bound=Union[nn.Module, nn.Parameter])
-
-class HookedClass(Generic[B]):    
-    def __init__(self, module_class : Union[Type[T], Type[P]]):
+class HookedClass(Generic[T]):    
+    def __init__(self, module_class: Union[Type[T], Type[P]]):
         self.module_class = module_class
 
     @overload
@@ -49,15 +43,20 @@ class HookedClass(Generic[B]):
     
     def __call__(self, *args: Any, **kwargs: Any) -> Union[HookedModule[T], HookedParameter[P]]:
         instance = self.module_class(*args, **kwargs)
-        return cast(Union[HookedModule[T], HookedParameter[P]], auto_hook(instance))
+        hooked = auto_hook(instance)
+        if isinstance(hooked, HookedModule):
+            return cast(HookedModule[T], hooked)
+        else:
+            return cast(HookedParameter[P], hooked)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.module_class, name)
 
-    def unwrap(self) -> Type[B]:
+    def unwrap(self) -> Type[T]:
         '''recursively unwraps the module class'''
-        return cast(Type[B], self.module_class)
+        return cast(Type[T], self.module_class)
 
+# Update the auto_hook function to return the correct type
 @overload
 def auto_hook(module_or_class: Type[T]) -> HookedClass[T]: ...
 
@@ -68,13 +67,15 @@ def auto_hook(module_or_class: T) -> HookedModule[T]:...
 def auto_hook(module_or_class: P) -> HookedParameter[P]:...
 
 @overload
-def auto_hook(module_or_class:Type[P]) -> HookedClass[P]:...
+def auto_hook(module_or_class: Type[P]) -> HookedClass[P]:...
 
 def auto_hook(
     module_or_class: Union[Type[T], T, Type[P], P]
 ) -> Union[
-        HookedModule[T], HookedClass[T], HookedParameter, HookedClass[P]
+        HookedModule[T], HookedClass[T], HookedParameter[P], HookedClass[P]
     ]:
+    if isclass(module_or_class):
+        return HookedClass(module_or_class)
     '''
     This function wraps either a module instance or a module class and returns a type that
     preserves the original module/Parameters interface but adds a hook_point to all nn.Module and select torch.nn.Parameter classes
@@ -145,6 +146,7 @@ class HookedModule(HookedRootModule, Generic[T]):
         self._create_forward()
         self._wrap_submodules()
         self.setup()
+    
 
     def setup(self):
         self.mod_dict = {}

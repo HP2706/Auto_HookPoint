@@ -1,8 +1,9 @@
 import inspect
+import warnings
 from tests import test_auto_wrapper
 from typing import Any, Callable, List, Optional, Type, TypeVar, Union, cast
 import torch.nn as nn
-from Components.AutoHooked import HookedModule, auto_hook
+from src.AutoHooked import HookedModule, auto_hook
 import torch
 
 T = TypeVar("T", bound=nn.Module)
@@ -24,13 +25,14 @@ def check_auto_hook(
         model_instance = model(**init_kwargs)
         try:
             test_func(model_instance, input_kwargs)      
-            print(f"Test passed: {test_func.__name__}")
+
         except Exception as e:
+            message = f"Test failed: {test_func.__name__} with error: {str(e)}"
             if strict:
-                raise  # Re-raise the exception if strict mode is enabled
+                raise Exception(message)  # Re-raise the exception if strict mode is enabled
             else:
-                print(f"Test failed: {test_func.__name__}")
-                print(f"Error: {str(e)}")
+                warnings.warn(message) 
+
     return auto_hook(model(**init_kwargs))
 
 def get_test_functions(module) -> List[Callable]:

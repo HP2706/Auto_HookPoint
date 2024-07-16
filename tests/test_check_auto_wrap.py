@@ -1,4 +1,4 @@
-from Components.Diagnostics import check_auto_hook
+from src.Check_Hook import check_auto_hook
 from .test_models import (
     AutoEncoder,
     SimpleModule, 

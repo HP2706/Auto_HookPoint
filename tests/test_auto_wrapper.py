@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
-from Components.AutoHooked import auto_hook
+from src.AutoHooked import auto_hook
 from transformer_lens.hook_points import HookPoint
 from transformers.utils.generic import ModelOutput
 from tests.test_utils import (

@@ -101,7 +101,7 @@ class SimpleNestedModuleList(nn.Module):
             x = module(x)
         return x
     
-# take from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
+# taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
 # this is used to show that we can hook models that only use nn.Parameter
 class AutoEncoder(nn.Module):
     def __init__(self, cfg):
