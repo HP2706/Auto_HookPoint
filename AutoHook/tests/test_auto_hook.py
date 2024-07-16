@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
-from src.AutoHooked import auto_hook
+from AutoHook.hook import auto_hook
 from transformer_lens.hook_points import HookPoint
 from transformers.utils.generic import ModelOutput
-from tests.test_utils import (
+from .test_utils import (
     generate_expected_hookpoints, 
     get_duplicates, 
 )
@@ -84,7 +84,6 @@ def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
         counter['hooks'].append(hook_name)
         return x
     generic_hook_check(model, input, hook_wrapper, is_backward=False)
-
 
 def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)

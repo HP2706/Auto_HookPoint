@@ -9,7 +9,7 @@ import torch
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.AutoHooked import auto_hook
+from AutoHook import auto_hook
 from transformer_lens.hook_points import HookPoint
 
 # example implementation taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
@@ -41,38 +41,3 @@ class AutoEncoder(nn.Module):
 autoencoder = auto_hook(AutoEncoder({"d_mlp": 10, "dict_mult": 10, "l1_coeff": 10, "seed": 1}))
 print(autoencoder.hook_dict.items())
 # dict_items([('hook_point', HookPoint()), ('W_enc.hook_point', HookPoint()), ('W_dec.hook_point', HookPoint()), ('b_enc.hook_point', HookPoint()), ('b_dec.hook_point', HookPoint())])
-
-
-class AutoEncoder(nn.Module):
-    def __init__(self, cfg):
-        super().__init__()
-        d_hidden = cfg["d_mlp"] * cfg["dict_mult"]
-        d_mlp = cfg["d_mlp"]
-        dtype = torch.float32
-        torch.manual_seed(cfg["seed"])
-        self.W_enc = nn.Parameter(
-            torch.nn.init.kaiming_uniform_(
-                torch.empty(d_mlp, d_hidden, dtype=dtype)
-            )
-        )
-        self.W_enc_hook_point = HookPoint()
-        self.W_dec = nn.Parameter(
-            torch.nn.init.kaiming_uniform_(
-                torch.empty(d_hidden, d_mlp, dtype=dtype)
-            )
-        )
-        self.W_dec_hook_point = HookPoint()
-        self.b_enc = nn.Parameter(
-            torch.zeros(d_hidden, dtype=dtype)
-        )
-        self.b_enc_hook_point = HookPoint()
-        self.b_dec = nn.Parameter(
-            torch.zeros(d_mlp, dtype=dtype)
-        )
-        self.b_dec_hook_point = HookPoint()
-
-    def forward(self, x):
-        x_cent = self.b_dec_hook_point(x - self.b_dec)
-        acts = torch.relu(self.b_enc_hook_point(self.W_enc_hook_point(x_cent @ self.W_enc) + self.b_enc))
-        x_reconstruct = self.b_dec_hook_point(self.W_dec_hook_point(acts @ self.W_dec) + self.b_dec)
-        return x_reconstruct

@@ -20,7 +20,7 @@ pip install autohooked
 ###Usage as decorator
 
 ```python
-from src.AutoHooked import auto_hook
+from AutoHook import auto_hook
 import torch.nn as nn
 
 @auto_hook
@@ -43,7 +43,7 @@ print(model.hook_dict.items())  # dict_items([('hook_point', HookPoint()), ('fc1
 AutoHooked can also work with models that use `nn.Parameter`, such as this AutoEncoder example:
 
 ```python
-from src.AutoHooked import auto_hook
+from AutoHook import auto_hook
 import torch
 from torch import nn
 
@@ -127,5 +127,5 @@ check_auto_hook(hooked_model, strict=False)
 this will run the test suite on the new model and can provide some information about if the model is hooked correctly. 
 
 if strict is set to True a runtime error will be raised if the tests fail else 
-a warning will be shown.
+a warning
 

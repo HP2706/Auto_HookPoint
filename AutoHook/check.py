@@ -1,10 +1,9 @@
 import inspect
 import warnings
-from tests import test_auto_wrapper
-from typing import Any, Callable, List, Optional, Type, TypeVar, Union, cast
+from typing import Any, Callable, List, Type, TypeVar
 import torch.nn as nn
-from src.AutoHooked import HookedModule, auto_hook
-import torch
+from AutoHook.hook import HookedModule, auto_hook
+from .tests import test_auto_hook
 
 T = TypeVar("T", bound=nn.Module)
 
@@ -20,7 +19,7 @@ def check_auto_hook(
     #it is autohooked from an instance or a cls
     
     #Run all test functions from test_auto_wrapper
-    test_functions = get_test_functions(test_auto_wrapper)
+    test_functions = get_test_functions(test_auto_hook)
     for test_func in test_functions:  
         model_instance = model(**init_kwargs)
         try:

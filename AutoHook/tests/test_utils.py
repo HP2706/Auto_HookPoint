@@ -1,14 +1,12 @@
 from torch import nn
-from utils import iterate_module
+from AutoHook.utils import iterate_module
 from transformer_lens.hook_points import HookPoint
-from src.AutoHooked import HookedModule, auto_hook, BUILT_IN_MODULES
-from typing import Any, List, Union
+from AutoHook.hook import HookedModule, BUILT_IN_MODULES
+from typing import Union
 from collections import Counter
-from typing import TypeVar, Type
-from inspect import isclass
+from typing import TypeVar
 
 T = TypeVar('T', bound=nn.Module)
-
 
 def get_duplicates(lst : list[str]) -> list[str]:
     return [item for item, count in Counter(lst).items() if count > 1]
