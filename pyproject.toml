@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "Automatic_Hook"
+version = "0.2.0"
+description = "make any model compatible with transformer_lens"
+repository = "https://github.com/HP2706/Automatic_Hook.git"  
+authors = ["HP <hprjdk@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "Automatic_Hook"}] 
+[tool.poetry.dependencies]
+python = "^3.11"
+transformers = "^4.26.1"
+transformer_lens = "^2.2.2" 
+torch = "^2.0.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^6.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.pyright]
+include = ["Auto_Hook"]
+exclude = [
+    "**/__pycache__",
+    "**/tests/**",
+]

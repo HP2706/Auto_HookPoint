@@ -3,7 +3,7 @@ import sys
 import os
 # add parent directory to sys path to import auto_hook
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Auto_Hook import auto_hook
+from Automatic_Hook import auto_hook
 import torch.nn as nn
 
 @auto_hook

@@ -1,4 +1,4 @@
-# AutoHooked
+# Automatic_Hook
 
 AutoHooked is a Python library that makes it possible to use arbitrary models in transformer_lens. 
 This happens via an auto_hook function that wraps your pytorch model and applies hookpoint for every major 
@@ -11,7 +11,7 @@ This happens via an auto_hook function that wraps your pytorch model and applies
 ## Installation
 
 ```bash
-pip install AutoHook
+pip install Automatic_Hook
 ```
 
 ## Usage
@@ -19,7 +19,7 @@ pip install AutoHook
 ###Usage as decorator
 
 ```python
-from AutoHook import auto_hook
+from Automatic_Hook import auto_hook
 import torch.nn as nn
 
 @auto_hook
@@ -37,15 +37,16 @@ model = MyModel()
 print(model.hook_dict.items())  # dict_items([('hook_point', HookPoint()), ('fc1.hook_point', HookPoint())])
 ```
 
-### Usage with nn.Parameter
+### Wrap an instance
 
 AutoHooked can also work with models that use `nn.Parameter`, such as this AutoEncoder example:
 
 ```python
-from AutoHook import auto_hook
+from Automatic_Hook import auto_hook
 import torch
 from torch import nn
 
+# taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
 class AutoEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -77,7 +78,7 @@ print(autoencoder.hook_dict.items())
 # dict_items([('hook_point', HookPoint()), ('W_enc.hook_point', HookPoint()), ('W_dec.hook_point', HookPoint()), ('b_enc.hook_point', HookPoint()), ('b_dec.hook_point', HookPoint())])
 ```
 
-where previously to hook the model i
+If this was to be done manually the code would be way less clean:
 
 ```python
 class AutoEncoder(nn.Module):
@@ -113,20 +114,25 @@ class AutoEncoder(nn.Module):
         acts = torch.relu(self.b_enc_hook_point(self.W_enc_hook_point(x_cent @ self.W_enc) + self.b_enc))
         x_reconstruct = self.b_dec_hook_point(self.W_dec_hook_point(acts @ self.W_dec) + self.b_dec)
         return x_reconstruct
-´´´
+```
 
-There might be edge cases not supported for come weird reason so after hooking a model
-you can test that the tests pass by running:
+## Note 
+
+There might be edge cases not supported for some weird reason so a function 'check_auto_hook' is provided to run the model class on all internal tests.
+
+Note however that these might not always be informative, but can give hints/indications.
 
 ```python
-from AutoHooked import check_auto_hook
+from Automatic_Hook import check_auto_hook
 hooked_model = auto_hook(model)
 input_kwargs = {'x': torch.randn(10, 10)}
 init_kwargs = {'cfg': {'d_mlp': 10, 'dict_mult': 10, 'l1_coeff': 10, 'seed': 1}}
 check_auto_hook(AutoEncoder, input_kwargs, init_kwargs)
 ```
-this will run the test suite on the new model and can provide some information about if the model is hooked correctly. 
 
 if strict is set to True a runtime error will be raised if the tests fail else 
-a warning
+a warning.
 
+## Backward(bwd) Hook
+
+Some trouble might occur this is specifcally when a model or its inner-components returns a non-tensor object which is then passed to a hook. I am working on how to resolve this. However this would still work if those hooks are just disabled.

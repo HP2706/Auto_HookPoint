@@ -1,14 +1,14 @@
-import inspect
-import warnings
-from typing import Any, Callable, List, Type, TypeVar
-import torch.nn as nn
-from Auto_Hook.hook import HookedModule, auto_hook
 import os
 import sys
 
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
+import inspect
+import warnings
+from typing import Any, Callable, List, Type, TypeVar
+import torch.nn as nn
+from Automatic_Hook.hook import HookedModule, auto_hook
 
 from tests import test_auto_hook
 

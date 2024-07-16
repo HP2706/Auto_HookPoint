@@ -1,0 +1,11 @@
+[virtualenvs]
+in-project = true
+create = true
+
+[build]
+generate-setup-file = false
+
+[installer]
+parallel = true
+
+[repositories]

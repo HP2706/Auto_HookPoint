@@ -9,3 +9,4 @@ experiment.ipynb
 main.ipynb
 __pycache__
 .pytest_cache
+dist
