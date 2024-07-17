@@ -8,9 +8,12 @@ from torch import nn
 import torch
 import sys
 import os
+from functools import partial
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Auto_HookPoint import auto_hook
+from transformer_lens.hook_points import HookedRootModule
 from Auto_HookPoint.check import check_auto_hook
+from typing import cast
 from transformer_lens.hook_points import HookPoint
 
 # example implementation taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
@@ -45,3 +48,24 @@ print(autoencoder.hook_dict.items())
 input_kwargs = {'x': torch.randn(10, 10)}
 init_kwargs = {'cfg': {'d_mlp': 10, 'dict_mult': 10, 'l1_coeff': 10, 'seed': 1}}
 check_auto_hook(AutoEncoder, input_kwargs, init_kwargs)
+
+input_kwargs = {'x': torch.randn(10, 10)}
+
+def hook_fn(x, hook=None, hook_name=None):
+    print('hello from hook:', hook_name)
+    return x
+
+autoencoder.run_with_hooks(
+    **input_kwargs, 
+    fwd_hooks=[
+        (hook_name, partial(hook_fn, hook_name=hook_name))
+        for hook_name in autoencoder.hook_dict.keys()
+    ]
+)
+
+# for type hinting you can do the following
+class Model(HookedRootModule, AutoEncoder):
+    pass
+
+autoencoder = cast(Model, autoencoder)
+# autoencoder.forward() is now type hinted in vscode

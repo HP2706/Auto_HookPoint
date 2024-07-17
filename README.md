@@ -77,12 +77,38 @@ class AutoEncoder(nn.Module):
 autoencoder = auto_hook(AutoEncoder({"d_mlp": 10, "dict_mult": 10, "l1_coeff": 10, "seed": 1}))
 print(autoencoder.hook_dict.items())
 # dict_items([('hook_point', HookPoint()), ('W_enc.hook_point', HookPoint()), ('W_dec.hook_point', HookPoint()), ('b_enc.hook_point', HookPoint()), ('b_dec.hook_point', HookPoint())])
+
+
+input_kwargs = {'x': torch.randn(10, 10)}
+
+def hook_fn(x, hook=None, hook_name=None):
+    print('hello from hook:', hook_name)
+    return x
+
+autoencoder.run_with_hooks(
+    **input_kwargs, 
+    fwd_hooks=[
+        (hook_name, partial(hook_fn, hook_name=hook_name))
+        for hook_name in autoencoder.hook_dict.keys()
+    ]
+)
+
+#if you want full typing support after hooking your model
+# a hacky solution would be:
+class Model(HookedRootModule, AutoEncoder):
+    pass
+
+autoencoder = cast(Model, autoencoder)
+# autoencoder.forward() is now type hinted in vscode
+
+
+
 ```
 
 If this was to be done manually the code would be way less clean:
 
 ```python
-class AutoEncoder(nn.Module):
+class AutoEncoder(HookedRootModule):
     def __init__(self, cfg):
         super().__init__()
         d_hidden = cfg['d_mlp'] * cfg['dict_mult']
@@ -109,6 +135,7 @@ class AutoEncoder(nn.Module):
             torch.zeros(d_mlp, dtype=dtype)
         )
         self.b_dec_hook_point = HookPoint()
+        self.setup() # build hook_dict
 
     def forward(self, x):
         x_cent = self.b_dec_hook_point(x - self.b_dec)
