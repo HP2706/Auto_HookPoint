@@ -1,25 +1,26 @@
-# Automatic_Hook
+# Auto_HookPoint
 
-AutoHooked is a Python library that makes it possible to use arbitrary models in transformer_lens. 
-This happens via an auto_hook function that wraps your pytorch model and applies hookpoint for every major 
+Auto_HookPoint is a Python library that makes it easy to integrate arbitrary pytorch models with transformer_lens. 
+This happens via an auto_hook function that wraps your pytorch model and applies a HookPoint for every nn.Module and most nn.Parameter that are part of the model.
 
 ## Features
 
 - Works with both `nn.Module` and `nn.Parameter` operations
-- Can be use both as a class decorator or on an already instantiated model 
+- Can be used both as a class decorator or on an already instantiated model 
+- Makes code cleaner
 
 ## Installation
 
 ```bash
-pip install Automatic_Hook
+pip install Auto_HookPoint
 ```
 
 ## Usage
 
-###Usage as decorator
+### Usage as decorator
 
 ```python
-from Automatic_Hook import auto_hook
+from Auto_HookPoint import auto_hook
 import torch.nn as nn
 
 @auto_hook
@@ -42,7 +43,7 @@ print(model.hook_dict.items())  # dict_items([('hook_point', HookPoint()), ('fc1
 AutoHooked can also work with models that use `nn.Parameter`, such as this AutoEncoder example:
 
 ```python
-from Automatic_Hook import auto_hook
+from Auto_HookPoint import auto_hook
 import torch
 from torch import nn
 
@@ -118,21 +119,19 @@ class AutoEncoder(nn.Module):
 
 ## Note 
 
-There might be edge cases not supported for some weird reason so a function 'check_auto_hook' is provided to run the model class on all internal tests.
-
+There might be edge cases not supported for some reason, so a function 'check_auto_hook' is provided to run the model class on all internal tests. 
 Note however that these might not always be informative, but can give hints/indications.
 
 ```python
-from Automatic_Hook import check_auto_hook
+from Auto_HookPoint import check_auto_hook
 hooked_model = auto_hook(model)
 input_kwargs = {'x': torch.randn(10, 10)}
 init_kwargs = {'cfg': {'d_mlp': 10, 'dict_mult': 10, 'l1_coeff': 10, 'seed': 1}}
 check_auto_hook(AutoEncoder, input_kwargs, init_kwargs)
 ```
 
-if strict is set to True a runtime error will be raised if the tests fail else 
-a warning.
+If strict is set to True, a runtime error will be raised if the tests fail; otherwise, 
+a warning will be issued. 
 
-## Backward(bwd) Hook
-
-Some trouble might occur this is specifcally when a model or its inner-components returns a non-tensor object which is then passed to a hook. I am working on how to resolve this. However this would still work if those hooks are just disabled.
+## Note on Backward Hooks (bwd_hooks)
+Some issues might occur when using backward hooks. As auto_hook hooks anything that is an instance of nn.Module, modules that return non-tensor objects will also be hooked. It is advised to only use backward hooks on hookpoints that take tensors as input. 

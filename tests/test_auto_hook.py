@@ -5,7 +5,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
-from Automatic_Hook.hook import auto_hook
+from Auto_HookPoint.hook import auto_hook
 from transformer_lens.hook_points import HookPoint
 from transformers.utils.generic import ModelOutput
 from .test_utils import (

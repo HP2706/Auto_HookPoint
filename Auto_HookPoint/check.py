@@ -8,7 +8,7 @@ import inspect
 import warnings
 from typing import Any, Callable, List, Type, TypeVar
 import torch.nn as nn
-from Automatic_Hook.hook import HookedModule, auto_hook
+from Auto_HookPoint.hook import HookedModule, auto_hook
 
 from tests import test_auto_hook
 
