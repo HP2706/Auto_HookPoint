@@ -1,12 +1,15 @@
 [tool.poetry]
 name = "Auto_HookPoint"
-version = "0.2.0"
+version = "0.3.0"
 description = "Make any model compatible with transformer_lens"
 repository = "https://github.com/HP2706/Auto_HookPoint"  
 authors = ["HP <hprjdk@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-packages = [{include = "Auto_HookPoint"}] 
+packages = [
+    {include = "Auto_HookPoint"},
+    {include = "tests", format = ["sdist", "wheel"]}
+]
 [tool.poetry.dependencies]
 python = "^3.11"
 transformers = "^4.26.1"
@@ -24,5 +27,4 @@ build-backend = "poetry.core.masonry.api"
 include = ["Auto_HookPoint"]
 exclude = [
     "**/__pycache__",
-    "**/tests/**",
 ]

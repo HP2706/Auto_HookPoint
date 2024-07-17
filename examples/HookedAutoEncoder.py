@@ -9,7 +9,8 @@ import torch
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from Auto_HookPoint import auto_hook, check_auto_hook
+from Auto_HookPoint import auto_hook
+from Auto_HookPoint.check import check_auto_hook
 from transformer_lens.hook_points import HookPoint
 
 # example implementation taken from neel nandas excellent autoencoder tutorial: https://colab.research.google.com/drive/1u8larhpxy8w4mMsJiSBddNOzFGj7_RTn#scrollTo=MYrIYDEfBtbL
