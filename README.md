@@ -161,4 +161,4 @@ If strict is set to True, a runtime error will be raised if the tests fail; othe
 a warning will be issued. 
 
 ## Note on Backward Hooks (bwd_hooks)
-Some issues might occur when using backward hooks. As auto_hook hooks anything that is an instance of nn.Module, modules that return non-tensor objects will also be hooked. It is advised to only use backward hooks on hookpoints that take tensors as input. 
+Some issues might occur when using backward hooks. As auto_hook hooks anything that is an instance of nn.Module, modules that return non-tensor objects will also be hooked. It is advised to only use backward hooks on hookpoints that returns tensors as output.
