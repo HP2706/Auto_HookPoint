@@ -1,7 +1,6 @@
 # Auto_HookPoint
 
-Auto_HookPoint is a Python library that makes it easy to integrate arbitrary pytorch models with transformer_lens. 
-This happens via an auto_hook function that wraps your pytorch model and applies a HookPoint for every nn.Module and most nn.Parameter that are part of the model.
+Auto_HookPoint is a Python library that seamlessly integrates arbitrary PyTorch models with transformer_lens. It provides an `auto_hook` function that automatically wraps your PyTorch model, applying HookPoints to every `nn.Module` and select `nn.Parameter` instances within the model structure. 
 
 ## Features
 
@@ -36,11 +35,14 @@ class MyModel(nn.Module):
 
 model = MyModel()
 print(model.hook_dict.items())  # dict_items([('hook_point', HookPoint()), ('fc1.hook_point', HookPoint())])
+
+orig_model = model.unwrap() #get back the original model
+
 ```
 
 ### Wrap an instance
 
-AutoHooked can also work with models that use `nn.Parameter`, such as this AutoEncoder example:
+Auto_HookPoint can also work with models that use `nn.Parameter`, such as this AutoEncoder example:
 
 ```python
 from Auto_HookPoint import auto_hook
