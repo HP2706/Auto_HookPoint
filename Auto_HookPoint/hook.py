@@ -213,15 +213,15 @@ class HookedModule(HookedRootModule, Generic[T]):
         Initialize the HookedModule.
         
         Args:
-            module (T): The module to be wrapped.
+            module (T): The nn.module to be wrapped.
         '''
         super().__init__()
         self._module = module
-        self.hook_point = getattr(self._module, 'hook_point', HookPoint())
+        self.hook_point = HookPoint()
         self._create_forward()
         self._wrap_submodules()
         self.setup()
-
+    
     def setup(self):
         '''
         Set up the module and hook dictionaries.
@@ -312,12 +312,3 @@ class HookedModule(HookedRootModule, Generic[T]):
 
         new_forward.__annotations__ = original_type_hints
         self.forward = new_forward
-
-    def list_all_hooks(self):
-        '''
-        List all hooks in the module.
-        
-        Returns:
-            list: A list of tuples containing hook names and hook points.
-        '''
-        return [(hook, hook_point) for hook, hook_point in self.hook_dict.items()] 

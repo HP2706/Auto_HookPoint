@@ -35,7 +35,7 @@ def generic_hook_check(
 ):
     counter = {'value': 0, 'hooks': []}
 
-    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
     hooks = [(name, partial(hook_fn, hook_name=name)) for name in hook_names]
     
     if is_backward:
@@ -94,7 +94,7 @@ def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
 def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)
     # Compare with actual hookpoints
-    hook_list = model.list_all_hooks()
+    hook_list = model.hook_dict.items()
     check_hook_types(hook_list)
     actual_hookpoints = [name for name, _ in hook_list]
 
@@ -136,7 +136,7 @@ def test_fwd_hook_fn_edit(
             return x
     
     
-    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
     hooks = [(name, partial(hook_wrapper, hook_name=name)) for name in hook_names]
     
     # Run model with hooks
@@ -167,7 +167,7 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
         model.zero_grad()
         return grad_dict
 
-    hook_names = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
     hooks = [(name, partial(backward_hook, hook_name=name)) for name in hook_names]
     
     # No hooks forward pass
@@ -214,7 +214,7 @@ def test_duplicate_hooks(
     _
 ):
     model = auto_hook(module)
-    hooks = [hook_name for hook_name, _ in model.list_all_hooks()]
+    hooks = [hook_name for hook_name, _ in model.hook_dict.items()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks}, hooks: {hooks} duplicates: {get_duplicates(hooks)}"
 
 @pytest.mark.parametrize("module, _ ", get_test_cases())
