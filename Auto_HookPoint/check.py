@@ -10,7 +10,8 @@ from typing import Any, Callable, List, Type, TypeVar
 import torch.nn as nn
 from Auto_HookPoint.hook import HookedModule, auto_hook
 try:
-    from tests import test_auto_hook
+    from tests import test_auto_hook #type: ignore
+    print("test_auto_hook imported")
 except ImportError:
     # If the tests module is not available, define a dummy test_auto_hook function
     def test_auto_hook(*args, **kwargs):
@@ -22,10 +23,24 @@ T = TypeVar("T", bound=nn.Module)
 def check_auto_hook(
     model: Type[T],
     input_kwargs: dict[str, Any],
-    init_kwargs : dict[str, Any] = {},
+    init_kwargs : dict[str, Any],
     strict : bool = False
 ) -> HookedModule[T]:
+    '''
+    Checks if the auto_hook function works correctly on a given model.
 
+    Args:
+        model (Type[T]): The model class to be tested.
+        input_kwargs (dict[str, Any]): Input arguments for the model.
+        init_kwargs (dict[str, Any]): Initialization arguments for the model.
+        strict (bool, optional): If True, raises an exception on test failure. Defaults to False.
+
+    Returns:
+        HookedModule[T]: The auto-hooked model instance.
+
+    Raises:
+        Exception: If tests fail and strict mode is enabled.
+    '''
     #iterate over both the instance and the
     #NOTE we check that the tests pass whether 
     #it is autohooked from an instance or a cls
@@ -53,6 +68,15 @@ def check_auto_hook(
     return auto_hook(model(**init_kwargs))
 
 def get_test_functions(module) -> List[Callable]:
+    '''
+    Retrieves all test functions from a given module.
+
+    Args:
+        module: The module to extract test functions from.
+
+    Returns:
+        List[Callable]: A list of test functions found in the module.
+    '''
     return [
         getattr(module, name) for name, func in inspect.getmembers(module)
         if inspect.isfunction(func) and name.startswith('test_') and name not in [
