@@ -15,6 +15,7 @@ from typing import (
     overload,
 )
 import functools
+from Auto_HookPoint.utils import process_container_module
 
 #these are modules where we will not iterate over their parameters
 BUILT_IN_MODULES = [
@@ -266,13 +267,10 @@ class HookedModule(HookedRootModule, Generic[T]):
         '''
         for name, submodule in self._module.named_children():
             if isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
-                unhooked_container = type(submodule)()
-                for key, m in (submodule.items() if isinstance(submodule, nn.ModuleDict) else enumerate(submodule)):
-                    unhooked_m = m.unwrap() if isinstance(m, HookedModule) else m
-                    if isinstance(submodule, nn.ModuleDict):
-                        unhooked_container[key] = unhooked_m
-                    else:
-                        unhooked_container.append(unhooked_m)
+                unhooked_container = process_container_module(
+                    submodule,
+                    lambda m: m.unwrap() if isinstance(m, HookedModule) else m
+                )
                 setattr(self._module, name, unhooked_container)
             elif isinstance(submodule, (HookedModule, HookedParameter)):
                 setattr(self._module, name, submodule.unwrap())
@@ -293,13 +291,10 @@ class HookedModule(HookedRootModule, Generic[T]):
             if isinstance(submodule, HookPoint):
                 continue
             elif isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
-                hooked_container = type(submodule)()
-                for key, m in (submodule.items() if isinstance(submodule, nn.ModuleDict) else enumerate(submodule)):
-                    hooked_m = auto_hook(m)
-                    if isinstance(submodule, nn.ModuleDict):
-                        hooked_container[key] = hooked_m
-                    else:
-                        hooked_container.append(hooked_m)
+                hooked_container = process_container_module(
+                    submodule,
+                    lambda m: auto_hook(m)
+                )
                 setattr(self._module, name, hooked_container)
             else:
                 setattr(self._module, name, auto_hook(submodule))
