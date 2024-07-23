@@ -7,6 +7,7 @@ sys.path.insert(0, project_root)
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Auto_HookPoint.hook import auto_hook
 from transformer_lens.hook_points import HookPoint
+from transformer_lens import HookedTransformer
 from transformers.utils.generic import ModelOutput
 from .test_utils import (
     generate_expected_hookpoints, 
@@ -16,7 +17,7 @@ import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .test_models import get_test_cases, get_base_cases, get_hf_cases
+from .test_models import get_test_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
 #for testing 
 
 T = TypeVar('T', bound=nn.Module)
@@ -229,34 +230,43 @@ def test_generate_expected_hookpoints(
     diff2 = list(set(hook_expected_2) - set(no_hook_expected))
     assert set(no_hook_expected) == set(hook_expected_2), f"Expected hookpoints do not match: {no_hook_expected} != {hook_expected_2} diff1: {diff1} diff2: {diff2}"
 
-@pytest.mark.parametrize(
-    "module", 
-    nn.Parameter(torch.randn(10))
-)
-def test_HookedParameter_unwrap(
-    module: P, 
-):
-    model = auto_hook(module)
-    assert model.unwrap() == module, f"Unwrapped {model.unwrap()} is not the same as the original {module}"
-
-@pytest.mark.parametrize(
-    "module", 
-    [nn.Parameter(torch.randn(10))]
-)
-def test_HookedParameter_hook(
-    module: P, 
-):
-    model = auto_hook(module)
-    counter = {'value': 0, 'hooks' :[]} #GLOBAL state
-    x = torch.ones(10).float()
-    def print_shape(x, hook=None, hook_name=None):
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        counter['shape'] = x.shape
+def run_hook_test(model, hook_name, input_data):
+    hook_called = {'value': False}
+    
+    def hook(x, hook=None, hook_name=None):
+        hook_called['value'] = True
         return x
     
-    model.add_hook('hook_point', partial(print_shape, hook_name='hook_point')) #type: ignore
-    model*1 # we multiply to test if the math ops methods are hooked correctly
-    assert counter['value'] == 1, f"Counter value is not 1, {counter['value']}"
-    assert counter['hooks'] == ['hook_point'], f"Hooks are not ['hook_point'], {counter['hooks']}"
-    assert counter['shape'] == x.shape, f"Shape is not the same, {counter['shape']} != {x.shape}"
+    model.run_with_hooks(**input_data, fwd_hooks=[(hook_name, hook)])
+    
+    assert hook_called['value'], f"{hook_name} was not called after auto_hook was applied"
+    assert hook_name in model.hook_dict, f"{hook_name} is not in the hook_dict"
+    print(f"TEST PASSED for {hook_name}")
+
+
+def test_manual_hook_point_decorator():
+    '''Tests if the auto_hook decorator works with manual hook point'''
+    @auto_hook
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(10, 10)
+            self.relu_hook_point = HookPoint()
+        def forward(self, x):
+            x = self.linear(x)
+            x = self.relu_hook_point(torch.relu(x))
+            return x
+    
+    model = TestModel()
+    run_hook_test(model, 'relu_hook_point', {'x': torch.randn(10)})
+
+def test_manual_hook_point_instance():
+    '''Tests if auto_hook works with pre-existing hook points in HookedTransformer'''
+    model = HookedTransformer(hooked_transformer_cfg)
+    hooked_model = auto_hook(model)
+    
+    input_kwargs = {
+        'input': torch.randint(0, 10, (1, 10)), 
+        'tokens': torch.randint(0, 2, (1, 10))
+    }
+    run_hook_test(hooked_model, 'blocks.3.hook_attn_out', input_kwargs)

@@ -80,6 +80,7 @@ def get_test_functions(module) -> List[Callable]:
     return [
         getattr(module, name) for name, func in inspect.getmembers(module)
         if inspect.isfunction(func) and name.startswith('test_') and name not in [
-            'test_HookedParameter_unwrap', 'test_HookedParameter_hook' , 'test_check_auto_hook'
+            'test_HookedParameter_unwrap', 'test_HookedParameter_hook' , 'test_check_auto_hook', 
+            'test_manual_hook_point_decorator', 'test_manual_hook_point_instance'
         ]
     ]

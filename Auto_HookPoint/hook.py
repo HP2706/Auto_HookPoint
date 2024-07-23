@@ -129,7 +129,7 @@ def auto_hook(
         )
     return Hooked
 
-class HookedParameter(nn.Parameter, HookedRootModule, Generic[P]):
+class HookedParameter(nn.Parameter, Generic[P]):
     '''
     A wrapper for nn.Parameter that adds a hook point and wraps any mathematical operations performed on it
     '''
@@ -145,7 +145,6 @@ class HookedParameter(nn.Parameter, HookedRootModule, Generic[P]):
         self.param = parameter
         self.hook_point = HookPoint()
         self._wrap_math_ops()
-        self.setup()
     
     def _wrap_math_ops(self):
         '''

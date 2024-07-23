@@ -39,7 +39,6 @@ input_kwargs = {
     'return_dict': True
 }
 
-
 model = LlamaForCausalLM(config=small_llama_config)
 hooked_model = auto_hook(model)
 print(hooked_model.hook_dict.items())

@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
+from transformer_lens import HookedTransformerConfig
 
 def get_base_cases():
     return [
@@ -62,6 +63,17 @@ small_llama_config = LlamaConfig(
     attention_bias=False,
     attention_dropout=0.1,
     mlp_bias=False,
+)
+
+hooked_transformer_cfg = HookedTransformerConfig(
+    d_model=256,
+    n_layers=4,
+    n_heads=4,
+    d_head=64,
+    d_mlp=512,
+    n_ctx=512,
+    d_vocab=10000,
+    act_fn="gelu",
 )
 
 class SimpleModelWithModuleDict(nn.Module):

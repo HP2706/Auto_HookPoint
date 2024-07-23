@@ -146,10 +146,28 @@ class AutoEncoder(HookedRootModule):
         return x_reconstruct
 ```
 
+## auto_hook + manual hookpointing
+
+As auto_hook will not hook arbitrary tensor manipulation functions, sometimes manual hooking will be necessary. for instance if using torch.relu() instead of nn.Relu(). Luckily auto_hook does not modify the existing hooks, so you can still use them.   
+
+```python
+@auto_hook
+    class TestModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(10, 10)
+            self.relu_hook_point = HookPoint()
+        def forward(self, x):
+            x = self.linear(x)
+            x = self.relu_hook_point(torch.relu(x))
+            return x
+```
+
 ## Note 
 
-There might be edge cases not supported for some reason, so a function 'check_auto_hook' is provided to run the model class on all internal tests. 
-Note however that these might not always be informative, but can give hints/indications.
+To ensure comprehensive coverage and identify potential edge cases, the 'check_auto_hook' function is provided. This utility runs the model class through a suite of internal tests, helping to validate the auto-hooking process and catch any unexpected behaviors or unsupported scenarios.
+
+Note however that these might not always be informative specifically the bwd_hook test function should generally be ignored.
 
 ```python
 from Auto_HookPoint import check_auto_hook
