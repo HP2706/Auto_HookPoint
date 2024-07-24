@@ -102,48 +102,20 @@ class Model(HookedRootModule, AutoEncoder):
 
 autoencoder = cast(Model, autoencoder)
 # autoencoder.forward() is now type hinted in vscode
-
-
-
 ```
 
-If this was to be done manually the code would be way less clean:
+## auto_hook + huggingface transformers
+
+auto_hook can also work with hf-models
 
 ```python
-class AutoEncoder(HookedRootModule):
-    def __init__(self, cfg):
-        super().__init__()
-        d_hidden = cfg['d_mlp'] * cfg['dict_mult']
-        d_mlp = cfg['d_mlp']
-        dtype = torch.float32
-        torch.manual_seed(cfg['seed'])
-        self.W_enc = nn.Parameter(
-            torch.nn.init.kaiming_uniform_(
-                torch.empty(d_mlp, d_hidden, dtype=dtype)
-            )
-        )
-        self.W_enc_hook_point = HookPoint()
-        self.W_dec = nn.Parameter(
-            torch.nn.init.kaiming_uniform_(
-                torch.empty(d_hidden, d_mlp, dtype=dtype)
-            )
-        )
-        self.W_dec_hook_point = HookPoint()
-        self.b_enc = nn.Parameter(
-            torch.zeros(d_hidden, dtype=dtype)
-        )
-        self.b_enc_hook_point = HookPoint()
-        self.b_dec = nn.Parameter(
-            torch.zeros(d_mlp, dtype=dtype)
-        )
-        self.b_dec_hook_point = HookPoint()
-        self.setup() # build hook_dict
+from Auto_HookPoint import auto_hook, check_auto_hook
+from transformers.models.mamba.modeling_mamba import MambaForCausalLM, MambaConfig
+import torch
 
-    def forward(self, x):
-        x_cent = self.b_dec_hook_point(x - self.b_dec)
-        acts = torch.relu(self.b_enc_hook_point(self.W_enc_hook_point(x_cent @ self.W_enc) + self.b_enc))
-        x_reconstruct = self.b_dec_hook_point(self.W_dec_hook_point(acts @ self.W_dec) + self.b_dec)
-        return x_reconstruct
+model = MambaForCausalLM(mamba_cfg)
+model = auto_hook(model)
+print('model.mod_dict', model.hook_d_dict.keys()) 
 ```
 
 ## auto_hook + manual hookpointing
@@ -152,15 +124,15 @@ As auto_hook will not hook arbitrary tensor manipulation functions, sometimes ma
 
 ```python
 @auto_hook
-    class TestModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.linear = nn.Linear(10, 10)
-            self.relu_hook_point = HookPoint()
-        def forward(self, x):
-            x = self.linear(x)
-            x = self.relu_hook_point(torch.relu(x))
-            return x
+class TestModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 10)
+        self.relu_hook_point = HookPoint()
+    def forward(self, x):
+        x = self.linear(x)
+        x = self.relu_hook_point(torch.relu(x))
+        return x
 ```
 
 ## Note 
