@@ -239,6 +239,8 @@ class HookedModule(HookedRootModule, Generic[T]):
         '''
         for name, child in module.named_children():
             full_name = f"{prefix}.{name}" if prefix else name
+            # Remove '._module' from the full_name
+            full_name = full_name.replace('._module', '')
             self.mod_dict[full_name] = child
             
             if isinstance(child, HookedModule):
@@ -253,6 +255,8 @@ class HookedModule(HookedRootModule, Generic[T]):
         for name, param in module.named_parameters(recurse=False):
             if isinstance(param, HookedParameter):
                 full_name = f"{prefix}.{name}" if prefix else name
+                # Remove '._module' from the full_name
+                full_name = full_name.replace('._module', '')
                 self.mod_dict[full_name] = param
                 hook_point_name = f'{full_name}.hook_point'
                 self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = param.hook_point

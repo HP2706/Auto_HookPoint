@@ -11,7 +11,6 @@ import torch.nn as nn
 from Auto_HookPoint.hook import HookedModule, auto_hook
 try:
     from tests import test_auto_hook #type: ignore
-    print("test_auto_hook imported")
 except ImportError:
     # If the tests module is not available, define a dummy test_auto_hook function
     def test_auto_hook(*args, **kwargs):
