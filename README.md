@@ -135,6 +135,35 @@ class TestModel(nn.Module):
         return x
 ```
 
+## Train SAE´s with sae_lens
+
+with auto_hook you can train a SparseAutoEncoder on any huggingface transformers model via sae_lens
+
+
+```python
+#most of the credit for this example goes to https://gist.github.com/joelburget
+#check https://github.com/HP2706/Auto_HookPoint/blob/main/examples/sae_lens.py for a complete example
+from Auto_HookPoint import HookedTransformerAdapter 
+from sae_lens import SAETrainingRunner, LanguageModelSAERunnerConfig
+
+cfg = LanguageModelSAERunnerConfig(
+    model_name=model_name,
+    hook_name="model.norm.hook_point",
+    ...
+)
+
+hooked_model = HookedTransformerAdapter(model_name, Cfg(device="cuda", n_ctx=512))
+sparse_autoencoder = SAETrainingRunner(cfg, override_model=hooked_model).run()
+```
+### Note on SAE-Lens Integration:
+1. Not all hook_points are compatible as run_with_cache only works for hook_points that return pure tensors which most 
+hf transformers block does not do. This is a limitation that can only be removed by changin transformer_lens, sae_lens or both.
+2. SAE-Lens expects activations with shape [batch, sequence_length, hidden_size].
+   Some hookpoints (e.g., MixtralSparseMoeBlock gate) may not work due to different shapes.
+3. If your model has more than one nn.Embedding attribute specify which one is the input embedding via the `input_embedding_name` parameter in HookedTransformerAdapter. 
+Note that after the model is hooked the naming of the self.model.embed_tokens(nn.Embedding) attribute becomes self.model._module.model._module.embed_tokens._module.weight
+4. auto_hook does not yet support premature stopping via stop_at_layer in the forward pass, which would make building the activation_store in sae_lens impractible for very large models.
+
 ## Note 
 
 To ensure comprehensive coverage and identify potential edge cases, the 'check_auto_hook' function is provided. This utility runs the model class through a suite of internal tests, helping to validate the auto-hooking process and catch any unexpected behaviors or unsupported scenarios.
