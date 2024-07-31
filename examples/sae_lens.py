@@ -1,9 +1,6 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from Auto_HookPoint import auto_hook 
+from transformers import AutoConfig
+from Auto_HookPoint import HookedTransformerAdapter 
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
-from transformer_lens.hook_points import HookedRootModule
-from transformer_lens import ActivationCache
-from typing import Union, List, Optional, Literal
 from dataclasses import dataclass
 
 #most of the credit for this example goes to https://gist.github.com/joelburget
@@ -86,58 +83,9 @@ cfg = LanguageModelSAERunnerConfig(
 @dataclass
 class Cfg:
     device: str
-
-class HookedTransformerAdapter(HookedRootModule):
-    def __init__(self, model_name, model : HookedRootModule, n_ctx=8192):
-        super().__init__()
-        self.cfg = Cfg(device='cpu')
-        self.model = auto_hook(model)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.n_ctx = n_ctx
-        self.W_E = self.model._module.model._module.embed_tokens._module.weight
-        self.setup()
-
-    def setup(self):
-        #this is to avoid the _module wrapper in names
-        self.hook_dict = self.model.hook_dict
-        self.mod_dict = self.model.mod_dict
-        for name, hook_point in self.hook_dict.items():
-            hook_point.name = name
-
-    def to_tokens(
-        self,
-        input: Union[str, List[str]],
-        prepend_bos: Optional[Union[bool, None]] = True,
-        padding_side: Optional[Union[Literal["left", "right"], None]] = None,
-        move_to_device: bool = True,
-        truncate: bool = True,
-    ):
-        return self.tokenizer(
-            input,
-            return_tensors="pt",
-            padding=True,
-            truncation=truncate,
-            max_length=self.n_ctx if truncate else None,
-        )["input_ids"]
-        
-    def run_with_cache(self, *model_args, return_cache_object=True, remove_batch_dim=False, **kwargs):
-        names_filter = kwargs.get("names_filter", None)
-        out, cache_dict = super().run_with_cache(
-            *model_args, remove_batch_dim=remove_batch_dim, names_filter=names_filter
-        )
-        if return_cache_object:
-            cache = ActivationCache(cache_dict, self, has_batch_dim=not remove_batch_dim)
-            return out, cache
-        else:
-            return out, cache_dict
-
-    def forward(self, *args, **kwargs):
-        result = self.model.forward(*args, **kwargs)
-        return result
-
+    n_ctx: int
 
 #training the SAE
 if __name__ == "__main__":
-    hooked_model = HookedTransformerAdapter(model_name, AutoModelForCausalLM.from_pretrained(model_name))
+    hooked_model = HookedTransformerAdapter(model_name, Cfg(device="cuda", n_ctx=512))
     sparse_autoencoder = SAETrainingRunner(cfg, override_model=hooked_model).run()

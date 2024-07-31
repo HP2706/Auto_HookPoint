@@ -13,8 +13,8 @@ class HookedTransformerAdapter(HookedRootModule):
     @overload
     def __init__(
         self,
-        cfg: Cfg,
         hf_model_name: str,
+        cfg: Cfg,
         *,
         embedding_attr: Optional[str] = None
     ) -> None: ...
@@ -22,17 +22,17 @@ class HookedTransformerAdapter(HookedRootModule):
     @overload
     def __init__(
         self,
-        cfg: Cfg,
         *,
         model: nn.Module,
         tokenizer: AutoTokenizer,
+        cfg: Cfg,
         embedding_attr: Optional[str] = None
     ) -> None: ...
 
     def __init__(
         self,
-        cfg: Cfg,
         hf_model_name: Optional[str] = None,
+        cfg: Optional[Cfg] = None,
         *,
         model: Optional[nn.Module] = None,
         tokenizer: Optional[Union[AutoTokenizer, PreTrainedTokenizer]] = None,
