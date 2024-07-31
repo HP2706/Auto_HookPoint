@@ -1,19 +1,19 @@
+from typing import Callable, Literal, Optional, TypeVar, Dict
+import torch
+from unittest.mock import patch
+import torch.nn as nn
+from torch.nn import functional as F
+from dataclasses import dataclass
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import pytest
 import os
 import sys
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
-from dataclasses import dataclass
-from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
-import pytest
-from .test_models import get_test_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
 from Auto_HookPoint import HookedTransformerAdapter
-from typing import Callable, Literal, Optional, TypeVar, Dict
-import torch
-from unittest.mock import patch
-import torch.nn as nn
-from torch.nn import functional as F
+
 
 #TODO test on the same things as auto_hook 
 
@@ -32,13 +32,6 @@ def mock_auto_tokenizer():
         mock_instance = AutoTokenizer.from_pretrained("gpt2")
         mock_tokenizer.from_pretrained.return_value = mock_instance
         yield mock_tokenizer
-
-@pytest.fixture
-def mock_auto_config():
-    with patch('transformers.AutoConfig') as mock_config:
-        mock_instance = AutoConfig.from_pretrained("gpt2")
-        mock_config.from_pretrained.return_value = mock_instance
-        yield mock_config
 
 @pytest.fixture
 def config():
@@ -104,3 +97,61 @@ def test_adapter_init_base_case(config):
     except Exception as e:
         assert False, f"Error initializing adapter: {e}"
 
+
+
+@dataclass
+class Config:
+    n_ctx: int = 12
+    device: str = "cpu"
+    vocab_size: int = 50257
+    block_attr: Optional[str] = 'layers'
+    embedding_attr: Optional[str] = 'emb'
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
+    preproc_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
+    last_layernorm_attr: Optional[str] = None
+    unembed_attr: Optional[str] = None
+    return_type: Optional[Literal["logits", "loss", "both"]] = None
+    normalization_type: Optional[str] = 'LN'
+    output_logits_soft_cap: float = 0.0
+
+
+
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10)
+        self.layers = nn.ModuleList([nn.Linear(10, 10) for _ in range(2)])
+
+    def forward(self, x):
+        x = self.emb(x)
+        for layer in self.layers:
+            x = layer(x)
+        return x
+    
+def test_hooked_transformer_adapter_run_with_cache():
+    model = MyModule()
+    adapted_model = HookedTransformerAdapter(
+        model=model,
+        tokenizer=gpt2_tokenizer,
+        cfg=Config(
+            preproc_fn=lambda x: model.emb(x), 
+            return_type="logits",
+            output_logits_soft_cap=0.0,
+            normalization_type="expected_average_only_in",
+            block_attr="layers",
+            embedding_attr="emb",
+        )
+    )
+
+    input_tensor = torch.randint(0, 50257, (1, 10))
+    result = adapted_model.run_with_cache(
+        input_tensor, 
+        start_at_layer=1,
+        stop_at_layer=2
+    )
+    
+    assert result is not None, "run_with_cache should return a result"
+    assert isinstance(result, tuple), "run_with_cache should return a tuple"
+    assert len(result) == 2, "run_with_cache should return a tuple of length 2"
+    assert isinstance(result[0], torch.Tensor), "First element of the result should be a tensor"
+    assert isinstance(result[1], dict), "Second element of the result should be a dictionary"

@@ -5,6 +5,8 @@ import torch
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
 from transformer_lens import HookedTransformerConfig
+from transformers import AutoTokenizer
+
 
 def get_base_cases():
     return [
@@ -26,6 +28,21 @@ def get_test_cases():
         *get_base_cases(),
         *get_hf_cases()
     ]
+
+
+gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+class MyModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10)
+        self.layers = nn.ModuleList([nn.Linear(10, 10) for _ in range(2)])
+
+    def forward(self, x):
+        x = self.emb(x)
+        for layer in self.layers:
+            x = layer(x)
+        return x
 
 
 small_mixtral_config = MixtralConfig(

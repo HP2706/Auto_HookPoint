@@ -53,17 +53,23 @@ class HookedTransformerAdapter(HookedRootModule):
         """
         Initialize a HookedTransformerAdapter.
 
-        This class adapts a Hugging Face transformer model to work with the
+        This class adapts a HuggingFace transformer model to work with the
         transformer_lens library, allowing the use of hooks and other
         transformer_lens features like run_with_cache.
+        NOTE: this is not yet fully compatible with transformer_lens.HookedTransformer 
 
         Args:
-            hf_model_name (Optional[str]): The name of the Hugging Face model to load.
+            hf_model_name (Optional[str]): 
+                The name of the Hugging Face model to load.
                 If provided, the model and tokenizer will be loaded automatically.
-            cfg (Optional[Cfg]): Configuration object.
-            model (Optional[nn.Module]): A pre-loaded Hugging Face model.
+            cfg (Cfg): 
+                Configuration object to communicate knowledge ie attributes and 
+                function from the input model to the adapter.
+            model (Optional[nn.Module]): 
+                A pre-loaded Hugging Face model.
                 Required if hf_model_name is not provided.
-            tokenizer (Optional[Union[AutoTokenizer, PreTrainedTokenizer]]): A pre-loaded tokenizer.
+            tokenizer (Optional[Union[AutoTokenizer, PreTrainedTokenizer]]): 
+                A pre-loaded tokenizer.
                 Required if hf_model_name is not provided.
 
         Raises:
