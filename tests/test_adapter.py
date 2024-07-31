@@ -9,10 +9,12 @@ from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 import pytest
 from .test_models import get_test_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
 from Auto_HookPoint import HookedTransformerAdapter
-from typing import TypeVar, Dict
+from typing import Optional, TypeVar, Dict
 import torch
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import torch.nn as nn
+
+#TODO test on the same things as auto_hook 
 
 T = TypeVar('T', bound=nn.Module)
 
@@ -44,12 +46,12 @@ def test_adapter_init_hf(mock_auto_config):
         device: str = "cpu"
         vocab_size: int = mock_auto_config.vocab_size
         n_ctx: int = 10  # dummy value
-    
+        embedding_attr : Optional[str] ='_module.transformer._module.wte._module'
+        block_attr : Optional[str] = None
     try:
         model = HookedTransformerAdapter(
-            hf_model_name="gpt2",
             cfg=Cfg(),
-            embedding_attr='_module.transformer._module.wte._module'
+            hf_model_name="gpt2",
         )
         assert isinstance(model, HookedTransformerAdapter)
     except Exception as e:
@@ -90,3 +92,4 @@ def test_adapter_init_base_case():
         )
     except Exception as e:
         assert False, f"Error initializing adapter: {e}"
+

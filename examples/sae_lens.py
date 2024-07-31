@@ -87,5 +87,5 @@ class Cfg:
 
 #training the SAE
 if __name__ == "__main__":
-    hooked_model = HookedTransformerAdapter(model_name, Cfg(device="cuda", n_ctx=512))
+    hooked_model = HookedTransformerAdapter(Cfg(device="cuda", n_ctx=512),model_name)
     sparse_autoencoder = SAETrainingRunner(cfg, override_model=hooked_model).run()

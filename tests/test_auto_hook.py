@@ -243,7 +243,6 @@ def run_hook_test(model, hook_name, input_data):
     assert hook_name in model.hook_dict, f"{hook_name} is not in the hook_dict"
     print(f"TEST PASSED for {hook_name}")
 
-
 def test_manual_hook_point_decorator():
     '''Tests if the auto_hook decorator works with manual hook point'''
     @auto_hook
