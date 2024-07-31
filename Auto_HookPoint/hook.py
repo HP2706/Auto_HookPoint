@@ -63,6 +63,9 @@ class HookedClass(Generic[T]):
         else:
             return cast(HookedParameter[P], hooked)
 
+    def __contains__(self, item: Any) -> bool:
+        return item in self.module_class
+
     def __getattr__(self, name: str) -> Any:
         '''
         Delegate attribute access to the wrapped class.

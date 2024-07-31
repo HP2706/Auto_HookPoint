@@ -11,4 +11,5 @@ __pycache__
 .pytest_cache
 wandb
 dist
+wandb
 checkpoints

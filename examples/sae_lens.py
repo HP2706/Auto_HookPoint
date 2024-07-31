@@ -3,7 +3,6 @@ from Auto_HookPoint import auto_hook
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
 from transformer_lens.hook_points import HookedRootModule
 from transformer_lens import ActivationCache
-import transformer_lens.utils as tl_utils
 from typing import Union, List, Optional, Literal
 from dataclasses import dataclass
 
