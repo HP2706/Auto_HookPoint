@@ -218,11 +218,24 @@ class HookedModule(HookedRootModule, Generic[T]):
             module (T): The nn.module to be wrapped.
         '''
         super().__init__()
-        self._module = module
+        self.__dict__['_module'] = module #NOTE avoid __getattr__
         self.hook_point = HookPoint()
         self._create_forward()
         self._wrap_submodules()
         self.setup()
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Delegate attribute access to the wrapped module if the attribute
+        is not found in the HookedModule.
+        """
+        if name in self.__dict__:
+            return self.__dict__[name]
+        if name in self._modules:
+            return self._modules[name]
+        if '_module' in self.__dict__:
+            return getattr(self.__dict__['_module'], name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
     def setup(self):
         '''
