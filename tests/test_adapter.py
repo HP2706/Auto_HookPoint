@@ -6,6 +6,7 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import pytest
+from .test_models import gpt2_tokenizer
 import os
 import sys
 # Add the project root directory to sys.path
@@ -41,13 +42,13 @@ def config():
         embedding_attr: Optional[str]
         vocab_size: int = 50257
         n_ctx: int = 12
-        device: str = "cpu"
         loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
         preproc_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
         last_layernorm_attr: Optional[str] = None
         unembed_attr: Optional[str] = None
         return_type: Optional[Literal["logits", "loss", "both"]] = "logits"
         normalization_type: Optional[str] = 'LN'
+        device : Optional[str] = None
         output_logits_soft_cap: float = 0.0
 
     def create_config(**kwargs):
@@ -98,24 +99,6 @@ def test_adapter_init_base_case(config):
         assert False, f"Error initializing adapter: {e}"
 
 
-
-@dataclass
-class Config:
-    n_ctx: int = 12
-    device: str = "cpu"
-    vocab_size: int = 50257
-    block_attr: Optional[str] = 'layers'
-    embedding_attr: Optional[str] = 'emb'
-    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
-    preproc_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
-    last_layernorm_attr: Optional[str] = None
-    unembed_attr: Optional[str] = None
-    return_type: Optional[Literal["logits", "loss", "both"]] = None
-    normalization_type: Optional[str] = 'LN'
-    output_logits_soft_cap: float = 0.0
-
-
-
 class MyModule(nn.Module):
     def __init__(self):
         super().__init__()
@@ -128,12 +111,13 @@ class MyModule(nn.Module):
             x = layer(x)
         return x
     
-def test_hooked_transformer_adapter_run_with_cache():
+def test_hooked_transformer_adapter_run_with_cache(config):
     model = MyModule()
     adapted_model = HookedTransformerAdapter(
         model=model,
         tokenizer=gpt2_tokenizer,
-        cfg=Config(
+        cfg=config(
+            device = "cpu",
             preproc_fn=lambda x: model.emb(x), 
             return_type="logits",
             output_logits_soft_cap=0.0,

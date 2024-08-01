@@ -1,20 +1,20 @@
 import logging
 from transformer_lens.hook_points import HookedRootModule,NamesFilter, DeviceType
+from transformer_lens.HookedTransformer import HookedTransformerKeyValueCache
 from transformer_lens.HookedTransformer import Output, USE_DEFAULT_VALUE
 from transformer_lens import ActivationCache
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedTokenizer
 from Auto_HookPoint.hook import auto_hook
 from typing import Any, Iterable, Protocol, Sequence, Tuple, Union, List, Optional, Literal, cast, overload, Callable
 from collections.abc import Sized
+from jaxtyping import Float, Int
 import torch.nn as nn
 from contextlib import contextmanager
 from torch.nn import functional as F
 import torch
-from jaxtyping import Int
 
 class Cfg(Protocol):
     n_ctx: int
-    device: str
     embedding_attr: Optional[str] = None #attribute name of the embedding matrix
     block_attr: Optional[str] = None  #attribute name of the transformer blocks
     last_layernorm_attr : Optional[str] = None
@@ -23,6 +23,7 @@ class Cfg(Protocol):
     normalization_type : Optional[str] = 'LN',
     output_logits_soft_cap : float = 0.0
     preproc_fn : Callable[[Any], Any] = lambda x: x
+    device : Optional[str] = None #defaults to cpu
     loss_fn : Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
 
 class HookedTransformerAdapter(HookedRootModule):
@@ -97,6 +98,7 @@ class HookedTransformerAdapter(HookedRootModule):
         self.tokenizer.pad_token = self.tokenizer.eos_token #type: ignore
         self.n_ctx = cfg.n_ctx  
         self.loss_fn = cfg.loss_fn
+        self.device = cfg.device
         
         #NOTE this is not ideal
         if cfg.unembed_attr is not None:
@@ -105,6 +107,7 @@ class HookedTransformerAdapter(HookedRootModule):
             self.ln_f = self._get_attr_recursively(self.model, cfg.last_layernorm_attr)
         if cfg.embedding_attr is not None:
             self.W_E = self._get_attr_recursively(self.model, cfg.embedding_attr)
+            setattr(self.W_E, 'device', cfg.device) #this is for sae_lens to work
         self.setup()
 
     def validate_args(
@@ -126,30 +129,31 @@ class HookedTransformerAdapter(HookedRootModule):
             assert isinstance(out, Sized), f"Expected module to be have attribute __len__, got {type(out)}"
             return cast(Sequence[nn.Module], out)     
 
+    from transformer_lens import HookedTransformer
     def forward(
         self, 
-        *model_args,
+        input,
+        return_type: Literal["logits"] = "logits",
         loss_per_token: bool = False,
+        prepend_bos: Optional[Union[bool, None]] = USE_DEFAULT_VALUE,
+        padding_side: Optional[Union[Literal["left", "right"], None]] = USE_DEFAULT_VALUE,
         start_at_layer: Optional[int] = None,
         tokens: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        shortformer_pos_embed: Optional[Float[torch.Tensor, "batch pos d_model"]] = None,
+        attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
         stop_at_layer: Optional[int] = None,
+        past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
     ):
         blocks = self._get_model_blocks()
         # Handle pre-block operations (e.g., embedding)
-        
-        #TODO make this more elegant
-        print("preproc_fn", self.preproc_fn)
-        print("model_args", model_args)
-        residual = self.preproc_fn(*model_args)
+        residual = self.preproc_fn(input)
 
         if start_at_layer is None:
             start_at_layer = 0
 
-        print("start_at_layer", start_at_layer, "stop_at_layer", stop_at_layer)
         blocks_and_idxs = list(zip(range(len(blocks)), blocks))
         for i, block in blocks_and_idxs[start_at_layer:stop_at_layer]:
             residual = block(residual)
-            print("block", i, residual.shape)
 
         if stop_at_layer is not None:
             return residual
