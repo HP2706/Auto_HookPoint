@@ -225,10 +225,10 @@ class HookedModule(HookedRootModule, Generic[T]):
         self.setup()
 
     def __getattr__(self, name: str) -> Any:
-        """
+        '''
         Delegate attribute access to the wrapped module if the attribute
         is not found in the HookedModule.
-        """
+        '''
         if name in self.__dict__:
             return self.__dict__[name]
         if name in self._modules:

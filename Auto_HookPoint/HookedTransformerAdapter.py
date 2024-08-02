@@ -16,12 +16,12 @@ from dataclasses import dataclass
 
 @dataclass
 class HookedTransformerAdapterCfg:
+    preproc_fn: Callable[[torch.Tensor], torch.Tensor] 
     block_attr: Optional[str]
     embedding_attr: Optional[str]
     vocab_size: int = 50257
     n_ctx: int = 12
     loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
-    preproc_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
     last_layernorm_attr: Optional[str] = None
     unembed_attr: Optional[str] = None
     return_type: Optional[Literal["logits", "loss", "both"]] = "logits"
@@ -113,7 +113,9 @@ class HookedTransformerAdapter(HookedRootModule):
         if cfg.embedding_attr is not None:
             self.W_E = self._get_attr_recursively(self.model, cfg.embedding_attr)
             setattr(self.W_E, 'device', cfg.device) #this is for sae_lens to work
+            
         self.setup()
+        self.to(cfg.device)
 
     def validate_args(
         self, 

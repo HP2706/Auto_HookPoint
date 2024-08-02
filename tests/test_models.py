@@ -33,10 +33,10 @@ def get_test_cases():
 gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2")
 
 class MyModule(nn.Module):
-    def __init__(self):
+    def __init__(self, device):
         super().__init__()
-        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10)
-        self.layers = nn.ModuleList([nn.Linear(10, 10) for _ in range(2)])
+        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10, device=device)
+        self.layers = nn.ModuleList([nn.Linear(10, 10, device=device) for _ in range(2)])
 
     def forward(self, x):
         x = self.emb(x)

@@ -1,6 +1,15 @@
 from typing import Union, Any, Callable
 from torch import nn
 from typing import Iterable, Tuple
+import torch
+
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
 
 def iterate_module(
     module : Union[nn.ModuleList, nn.Sequential, nn.ModuleDict]

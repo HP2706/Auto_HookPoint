@@ -1,6 +1,6 @@
+import torch
 from sae_lens import SAETrainingRunner, LanguageModelSAERunnerConfig
 from transformers import AutoConfig
-from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
 from dataclasses import dataclass
 import os
 import sys
@@ -8,7 +8,7 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
-from Auto_HookPoint import HookedTransformerAdapter 
+from Auto_HookPoint import HookedTransformerAdapter, HookedTransformerAdapterCfg
 
 
 #most of the credit for this example goes to https://gist.github.com/joelburget
@@ -66,7 +66,7 @@ cfg = LanguageModelSAERunnerConfig(
     l1_warm_up_steps=l1_warm_up_steps,  # this can help avoid too many dead features initially.
     lp_norm=1.0,  # the L1 penalty (and not a Lp for p < 1)
     train_batch_size_tokens=batch_size,
-    context_size=512,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
+    context_size=4096,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
     # Activation Store Parameters
     n_batches_in_buffer=64,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
@@ -77,24 +77,39 @@ cfg = LanguageModelSAERunnerConfig(
     dead_feature_window=1000,  # would effect resampling or ghost grads if we were using it.
     dead_feature_threshold=1e-4,  # would effect resampling or ghost grads if we were using it.
     # WANDB
-    log_to_wandb=True,  # always use wandb unless you are just testing code.
-    wandb_log_frequency=30,
-    eval_every_n_wandb_logs=20,
+    #log_to_wandb=True,  # always use wandb unless you are just testing code.
+    #wandb_log_frequency=30,
+    #eval_every_n_wandb_logs=20,
     # Misc
-    device="cpu",
+    device="mps",
     seed=42,
     n_checkpoints=0,
     checkpoint_path="checkpoints",
-    dtype="float32"
+    dtype="float16"
 )
 
-@dataclass
-class Cfg:
-    device: str
-    n_ctx: int
-    return_type: str = "logits"
-
-#training the SAE
 if __name__ == "__main__":
-    hooked_model = HookedTransformerAdapter(Cfg(device="cuda", n_ctx=512),model_name)
+    device = "cuda" 
+    hooked_model = HookedTransformerAdapter(
+        HookedTransformerAdapterCfg(
+            device=device, 
+            n_ctx=512,
+            block_attr="model.layers",
+            embedding_attr="model.embed_tokens"
+        ),
+        model_name
+    ).to(device)
+    
+    print("hooked_model.named_parameters()", list(hooked_model.named_parameters()))
+    #print("hooked_model.children()", list(hooked_model.children()))
+    print("hooked_model.modules()", list(hooked_model.modules()))
+    for param in hooked_model.modules():
+        print(param.device)
+    # Update the cfg to use the same device
+    cfg.device = device
+    
+    # Ensure the model's parameters are on the correct device
+    hooked_model = hooked_model.to(device)
+    
     sparse_autoencoder = SAETrainingRunner(cfg, override_model=hooked_model).run()
+   
