@@ -1,0 +1,4 @@
+transformers>=4.36.1
+torch>=2.0.1
+transformer_lens>=2.0.1
+sae_lens
