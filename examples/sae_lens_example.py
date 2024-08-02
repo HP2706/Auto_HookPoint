@@ -1,7 +1,15 @@
+from sae_lens import SAETrainingRunner, LanguageModelSAERunnerConfig
 from transformers import AutoConfig
-from Auto_HookPoint import HookedTransformerAdapter 
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
 from dataclasses import dataclass
+import os
+import sys
+# Add the project root directory to sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+
+from Auto_HookPoint import HookedTransformerAdapter 
+
 
 #most of the credit for this example goes to https://gist.github.com/joelburget
 
@@ -84,6 +92,7 @@ cfg = LanguageModelSAERunnerConfig(
 class Cfg:
     device: str
     n_ctx: int
+    return_type: str = "logits"
 
 #training the SAE
 if __name__ == "__main__":

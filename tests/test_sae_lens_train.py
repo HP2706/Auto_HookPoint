@@ -5,16 +5,15 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
-from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter
+from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg
 from tests.test_models import MyModule, gpt2_tokenizer
-from tests.test_adapter import config #import fixture
 
-def test_sae_training_runner_run(config):
+def test_sae_training_runner_run():
     model = MyModule()
     model = HookedTransformerAdapter(
         model=model,
         tokenizer=gpt2_tokenizer,
-        cfg=config(
+        cfg=HookedTransformerAdapterCfg(
             preproc_fn=lambda x: model.model.emb(x), 
             return_type="logits",
             output_logits_soft_cap=0.0,
@@ -27,7 +26,7 @@ def test_sae_training_runner_run(config):
 
     cfg = LanguageModelSAERunnerConfig(
         model_name="bla",
-        hook_name="model.emb.hook_point",
+        hook_name="emb.hook_point",
         hook_layer=0,
         d_in=10,
         dataset_path="monology/pile-uncopyrighted",

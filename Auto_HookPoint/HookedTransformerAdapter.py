@@ -12,25 +12,30 @@ import torch.nn as nn
 from contextlib import contextmanager
 from torch.nn import functional as F
 import torch
+from dataclasses import dataclass
 
-class Cfg(Protocol):
-    n_ctx: int
-    embedding_attr: Optional[str] = None #attribute name of the embedding matrix
-    block_attr: Optional[str] = None  #attribute name of the transformer blocks
-    last_layernorm_attr : Optional[str] = None
-    unembed_attr : Optional[str] = None
-    return_type : Optional[Literal["logits", "loss", "both"]] = None
-    normalization_type : Optional[str] = 'LN',
-    output_logits_soft_cap : float = 0.0
-    preproc_fn : Callable[[Any], Any] = lambda x: x
-    device : Optional[str] = None #defaults to cpu
-    loss_fn : Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
+@dataclass
+class HookedTransformerAdapterCfg:
+    block_attr: Optional[str]
+    embedding_attr: Optional[str]
+    vocab_size: int = 50257
+    n_ctx: int = 12
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
+    preproc_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x
+    last_layernorm_attr: Optional[str] = None
+    unembed_attr: Optional[str] = None
+    return_type: Optional[Literal["logits", "loss", "both"]] = "logits"
+    normalization_type: Optional[str] = 'LN'
+    device: Optional[str] = None
+    output_logits_soft_cap: float = 0.0
+
+
 
 class HookedTransformerAdapter(HookedRootModule):
     @overload
     def __init__(
         self,
-        cfg: Cfg,
+        cfg: HookedTransformerAdapterCfg,
         hf_model_name: str,
     ) -> None: ...
 
@@ -40,12 +45,12 @@ class HookedTransformerAdapter(HookedRootModule):
         *,
         model: nn.Module,
         tokenizer: AutoTokenizer,
-        cfg: Cfg,
+        cfg: HookedTransformerAdapterCfg,
     ) -> None: ...
 
     def __init__(
         self,
-        cfg: Cfg,
+        cfg: HookedTransformerAdapterCfg,
         hf_model_name: Optional[str] = None,
         *,
         model: Optional[nn.Module] = None,
@@ -238,7 +243,7 @@ class HookedTransformerAdapter(HookedRootModule):
         )
 
         if return_cache_object:
-            cache = ActivationCache(cache_dict, self, has_batch_dim=not remove_batch_dim)
-            return out, cache
+            cache_dict = ActivationCache(cache_dict, self, has_batch_dim=not remove_batch_dim)
+            return out, cache_dict
         else:
             return out, cache_dict
