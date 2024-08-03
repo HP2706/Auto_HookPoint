@@ -1,35 +1,33 @@
 import logging
 from transformer_lens.hook_points import HookedRootModule,NamesFilter, DeviceType
-from transformer_lens.HookedTransformer import HookedTransformerKeyValueCache
-from transformer_lens.HookedTransformer import Output, USE_DEFAULT_VALUE
+from transformer_lens.HookedTransformer import HookedTransformerKeyValueCache, Output, USE_DEFAULT_VALUE
+from transformer_lens.utils import lm_cross_entropy_loss
 from transformer_lens import ActivationCache
-from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedTokenizer
-from Auto_HookPoint.hook import auto_hook
+from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedTokenizer, MixtralModel
+from Auto_HookPoint.hook import HookedModule, auto_hook
 from typing import Any, Iterable, Protocol, Sequence, Tuple, Union, List, Optional, Literal, cast, overload, Callable
 from collections.abc import Sized
 from jaxtyping import Float, Int
 import torch.nn as nn
-from contextlib import contextmanager
 from torch.nn import functional as F
 import torch
 from dataclasses import dataclass
 
 @dataclass
 class HookedTransformerAdapterCfg:
-    preproc_fn: Callable[[torch.Tensor], torch.Tensor] 
+    preproc_fn_creator: Optional[Callable[[nn.Module], Callable[[torch.Tensor], torch.Tensor]]]
+    last_layernorm_attr: Optional[str] 
     block_attr: Optional[str]
+    lm_head_attr: Optional[str] 
     embedding_attr: Optional[str]
+    lm_head_attr: Optional[str]
     vocab_size: int = 50257
     n_ctx: int = 12
-    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.cross_entropy
-    last_layernorm_attr: Optional[str] = None
-    unembed_attr: Optional[str] = None
+    loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = lm_cross_entropy_loss
     return_type: Optional[Literal["logits", "loss", "both"]] = "logits"
     normalization_type: Optional[str] = 'LN'
     device: Optional[str] = None
     output_logits_soft_cap: float = 0.0
-
-
 
 class HookedTransformerAdapter(HookedRootModule):
     @overload
@@ -88,26 +86,25 @@ class HookedTransformerAdapter(HookedRootModule):
         super().__init__()
         self.validate_args(hf_model_name, model, tokenizer)
 
-        self.return_type = cfg.return_type
         if isinstance(hf_model_name, str):
-            self.model = auto_hook(AutoModelForCausalLM.from_pretrained(hf_model_name))
+            self.model = auto_hook(AutoModelForCausalLM.from_pretrained(hf_model_name).to(cfg.device))
             self.tokenizer = AutoTokenizer.from_pretrained(hf_model_name)
         elif isinstance(model, nn.Module) and tokenizer is not None:
-            self.model = auto_hook(model)
+            self.model = auto_hook(model.to(cfg.device))
             self.tokenizer = tokenizer
         else:
             raise ValueError("Invalid input. Provide either a model name (str) or both model and tokenizer objects.")
 
-        self.cfg = cfg
-        self.preproc_fn = cfg.preproc_fn
+        self.cfg = cfg  
+        self.preproc_fn = cfg.preproc_fn_creator(self.model) if cfg.preproc_fn_creator else None
         self.tokenizer.pad_token = self.tokenizer.eos_token #type: ignore
         self.n_ctx = cfg.n_ctx  
         self.loss_fn = cfg.loss_fn
         self.device = cfg.device
         
         #NOTE this is not ideal
-        if cfg.unembed_attr is not None:
-            self.lm_head = self._get_attr_recursively(self.model, cfg.unembed_attr)
+        if cfg.lm_head_attr is not None:
+            self.lm_head = self._get_attr_recursively(self.model, cfg.lm_head_attr)
         if cfg.last_layernorm_attr is not None:
             self.ln_f = self._get_attr_recursively(self.model, cfg.last_layernorm_attr)
         if cfg.embedding_attr is not None:
@@ -136,7 +133,6 @@ class HookedTransformerAdapter(HookedRootModule):
             assert isinstance(out, Sized), f"Expected module to be have attribute __len__, got {type(out)}"
             return cast(Sequence[nn.Module], out)     
 
-    from transformer_lens import HookedTransformer
     def forward(
         self, 
         input,
@@ -151,9 +147,16 @@ class HookedTransformerAdapter(HookedRootModule):
         stop_at_layer: Optional[int] = None,
         past_kv_cache: Optional[HookedTransformerKeyValueCache] = None,
     ):
+        if torch.isnan(input).any():
+            raise ValueError("input contains nan")
         blocks = self._get_model_blocks()
         # Handle pre-block operations (e.g., embedding)
-        residual = self.preproc_fn(input)
+        if start_at_layer is None:
+            residual = self.preproc_fn(input)
+            tokens = input
+        else:
+            assert type(input) == torch.Tensor
+            residual = input
 
         if start_at_layer is None:
             start_at_layer = 0
@@ -164,32 +167,35 @@ class HookedTransformerAdapter(HookedRootModule):
 
         if stop_at_layer is not None:
             return residual
-        
+
         if self.cfg.normalization_type is not None:
-            residual = self.ln_f(residual)  # [batch, pos, d_model]
-        
-        if self.return_type is None:
+            last_hidden = residual[0] #NOTE does this generalize to any hf model
+            residual = self.ln_f(last_hidden)  # [batch, pos, d_model]
+        if return_type is None:
+            print("return_type is None")
             return None
         else:
             assert self.lm_head is not None
             logits = self.lm_head(residual)  # [batch, pos, d_vocab]
+            if torch.isnan(logits).any():
+                raise ValueError("logits contains nan after lm_head")
             if self.cfg.output_logits_soft_cap > 0.0:
                 logits = self.cfg.output_logits_soft_cap * F.tanh(
                     logits / self.cfg.output_logits_soft_cap
                 )
-            if self.return_type == "logits":
+            if return_type == "logits":
                 return logits
             else:
                 assert (
                     tokens is not None
                 ), "tokens must be passed in if return_type is 'loss' or 'both'"
                 loss = self.loss_fn(logits, tokens)
-                if self.return_type == "loss":
+                if return_type == "loss":
                     return loss
-                elif self.return_type == "both":
+                elif return_type == "both":
                     return Output(logits, loss)
                 else:
-                    logging.warning(f"Invalid return_type passed in: {self.return_type}")
+                    logging.warning(f"Invalid return_type passed in: {return_type}")
                     return None
 
     def _get_attr_recursively(self, obj, attr : str) -> Any:
@@ -243,7 +249,6 @@ class HookedTransformerAdapter(HookedRootModule):
             stop_at_layer=stop_at_layer,
             **model_kwargs
         )
-
         if return_cache_object:
             cache_dict = ActivationCache(cache_dict, self, has_batch_dim=not remove_batch_dim)
             return out, cache_dict
