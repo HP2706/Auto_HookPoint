@@ -23,7 +23,7 @@ def get_hf_cases():
     ]
 
 #module instance, input 
-def get_test_cases():
+def get_combined_cases():
     return [
         *get_base_cases(),
         *get_hf_cases()

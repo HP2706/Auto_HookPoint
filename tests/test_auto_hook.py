@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .test_models import get_test_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
+from .test_models import get_combined_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
 #for testing 
 
 T = TypeVar('T', bound=nn.Module)
@@ -112,7 +112,7 @@ def generic_check_all_hooks(model):
         )
     print("TEST PASSED")
 
-@pytest.mark.parametrize("module, input", get_test_cases())
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_hook_fn_fwd_works(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -182,8 +182,20 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
         #TODO make a better test
         assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
         
+@pytest.mark.parametrize("module, input", get_combined_cases())
+def test_unwrap_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model_pre = module
+    pre_named_modules = [(name, type(module)) for name, module in model_pre.named_modules()]
+    wrapped_model = auto_hook(model_pre)
+    unwrapped_model = wrapped_model.unwrap()
+    post_named_modules = [(name, type(module)) for name, module in unwrapped_model.named_modules()]
+    assert pre_named_modules == post_named_modules, f"Expected {pre_named_modules}, got {post_named_modules}"
 
-@pytest.mark.parametrize("module, input", get_base_cases())
+
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_to_works(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -196,7 +208,7 @@ def test_to_works(
     except StopIteration:
         raise ValueError(f"No parameters found in the model {list(model.named_parameters())}")
 
-@pytest.mark.parametrize("module, input", get_base_cases())
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_wrapping(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -219,7 +231,7 @@ def test_wrapping(
 
     assert len(incorrect_elms) == 0, f"These elements should be in post_named_parameters: {incorrect_elms}, but found only {[name for name, _ in post_named_parameters]}"
 
-@pytest.mark.parametrize("module, input", get_test_cases())
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_hook_fn_bwd_works(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -227,7 +239,7 @@ def test_hook_fn_bwd_works(
     model = auto_hook(module)
     generic_check_hook_fn_bwd_works(model, input)
 
-@pytest.mark.parametrize("module, _", get_test_cases())
+@pytest.mark.parametrize("module, _", get_combined_cases())
 def test_check_all_hooks(
     module: T, 
     _
@@ -235,7 +247,7 @@ def test_check_all_hooks(
     model = auto_hook(module)
     generic_check_all_hooks(model)
 
-@pytest.mark.parametrize("module, _", get_test_cases())
+@pytest.mark.parametrize("module, _", get_combined_cases())
 def test_check_unwrap_works(
     module: T, 
     _,
@@ -244,7 +256,7 @@ def test_check_unwrap_works(
     unwrapped = model.unwrap()
     assert unwrapped == module, f"Unwrapped {unwrapped} is not the same as the original {module}"
     
-@pytest.mark.parametrize("module, _ ", get_test_cases())
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
 def test_duplicate_hooks(
     module: T, 
     _
@@ -253,7 +265,7 @@ def test_duplicate_hooks(
     hooks = [hook_name for hook_name, _ in model.hook_dict.items()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks}, hooks: {hooks} duplicates: {get_duplicates(hooks)}"
 
-@pytest.mark.parametrize("module, _ ", get_test_cases())
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
 def test_generate_expected_hookpoints(
     module: T, 
     _, 

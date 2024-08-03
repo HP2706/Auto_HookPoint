@@ -289,7 +289,7 @@ class HookedModule(HookedRootModule, Generic[T]):
         Returns:
             T: The original, unwrapped module.
         '''
-        for name, submodule in self._module.named_children():
+        for name, submodule in list(self._module.named_children()):
             if isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
                 unhooked_container = process_container_module(
                     submodule,
@@ -301,8 +301,18 @@ class HookedModule(HookedRootModule, Generic[T]):
                 unwrapped_submodule = submodule.unwrap()
                 setattr(self._module, name, unwrapped_submodule)
                 self._module._modules[name] = unwrapped_submodule
+            elif hasattr(submodule, 'hook_point'):
+                # Remove hook_point from built-in modules
+                delattr(submodule, 'hook_point')
 
-        self._module._modules = {k:v for k,v in self._module._modules.items() if not isinstance(v, HookPoint)}
+        # Remove HookPoint instances from _modules
+        self._module._modules = {k: v for k, v in self._module._modules.items() if not isinstance(v, HookPoint)}
+
+        # Remove HookPoint instances from the module itself
+        for name in list(self._module.__dict__.keys()):
+            if isinstance(getattr(self._module, name), HookPoint):
+                delattr(self._module, name)
+
         return self._module
 
     def _wrap_submodules(self):
