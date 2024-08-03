@@ -3,7 +3,7 @@ import sys
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
-
+import copy
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Auto_HookPoint.hook import auto_hook
 from transformer_lens.hook_points import HookPoint
@@ -182,17 +182,42 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
         #TODO make a better test
         assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
         
+
 @pytest.mark.parametrize("module, input", get_base_cases())
-def test_unwrap_works(
+def test_to_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    print("module parameters", list(module.named_parameters()))
+    model = auto_hook(module.to(torch.float32))
+    model.to(torch.float16)
+    try:
+        assert next((model.parameters())).dtype == torch.float16, f"Expected dtype '{torch.float16}', got {model.linear.weight.dtype}"
+    except StopIteration:
+        raise ValueError(f"No parameters found in the model {list(model.named_parameters())}")
+
+@pytest.mark.parametrize("module, input", get_base_cases())
+def test_wrapping(
     module: T, 
     input : Dict[str, torch.Tensor]
 ):
     model_pre = module
-    pre_named_modules = [(name, type(module)) for name, module in model_pre.named_modules()]
-    wrapped_model = auto_hook(model_pre)
-    unwrapped_model = wrapped_model.unwrap()
-    post_named_modules = [(name, type(module)) for name, module in unwrapped_model.named_modules()]
-    assert pre_named_modules == post_named_modules, f"Expected {pre_named_modules}, got {post_named_modules}"
+    pre_named_parameters = [(name, param.clone().detach()) for name, param in model_pre.named_parameters()]
+    model = auto_hook(model_pre)
+
+    post_named_parameters = list(model.named_parameters())
+
+    incorrect_elms = []
+    for pre_name, pre_param in pre_named_parameters:
+        found = False
+        for post_name, post_param in post_named_parameters:
+            if pre_name == post_name and torch.equal(pre_param, post_param):
+                found = True
+                break
+        if not found:
+            incorrect_elms.append((pre_name, pre_param))
+
+    assert len(incorrect_elms) == 0, f"These elements should be in post_named_parameters: {incorrect_elms}, but found only {[name for name, _ in post_named_parameters]}"
 
 @pytest.mark.parametrize("module, input", get_test_cases())
 def test_hook_fn_bwd_works(

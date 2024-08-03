@@ -208,6 +208,8 @@ class HookedModule(HookedRootModule, Generic[T]):
     A wrapper for nn.Module that adds hook points and wraps submodules.
     '''
     
+    _modules: dict[str, nn.Module]
+    
     def __init__(self, module: T):
         '''
         Initialize the HookedModule.
@@ -218,10 +220,14 @@ class HookedModule(HookedRootModule, Generic[T]):
         super().__init__()
         self.__dict__['_module'] = module #NOTE avoid __getattr__
         self.__dict__['_modules'] = module._modules  
+        self.__dict__['_parameters'] = module._parameters
         self.hook_point = HookPoint()
         self._create_forward()
         self._wrap_submodules()
         self.setup()
+        # Preserve the original class name
+        self.__class__.__name__ = module.__class__.__name__
+
 
     def __getattr__(self, name: str) -> Any:
         '''
@@ -311,19 +317,19 @@ class HookedModule(HookedRootModule, Generic[T]):
                 else:
                     raise ValueError(f"Submodule {name} is not a nn.Parameter or torch.Tensor")
 
-        # we iterate over the children of the module and 
-        # wrap them if they are not a HookPoint
         for name, submodule in self._module.named_children():
             if isinstance(submodule, HookPoint):
                 continue
-            # we dont wrap container modules 
-            # but wrap their contents
             elif isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
                 hooked_container = process_container_module(
                     submodule,
                     lambda m: auto_hook(m)
                 )
                 setattr(self._module, name, hooked_container)
+            elif any(isinstance(submodule, built_in_module) for built_in_module in BUILT_IN_MODULES):
+                # For built-in modules, add a hook_point without wrapping
+                submodule.hook_point = HookPoint()
+                setattr(self._module, name, submodule)
             else:
                 setattr(self._module, name, auto_hook(submodule))
 
