@@ -120,8 +120,6 @@ def auto_hook(
     
     if isinstance(module_or_class, nn.Module):
         Hooked = HookedModule(module_or_class) # type: ignore
-        #NOTE we set the unwrap method to just return module_or_class
-        Hooked.unwrap = lambda: module_or_class # type: ignore
         Hooked = cast(HookedModule[T], Hooked)
     elif isinstance(module_or_class, (nn.Parameter, torch.Tensor)):
         Hooked = cast(HookedParameter[P], HookedParameter(module_or_class)) # type: ignore
@@ -219,6 +217,7 @@ class HookedModule(HookedRootModule, Generic[T]):
         '''
         super().__init__()
         self.__dict__['_module'] = module #NOTE avoid __getattr__
+        self.__dict__['_modules'] = module._modules  
         self.hook_point = HookPoint()
         self._create_forward()
         self._wrap_submodules()
@@ -291,14 +290,20 @@ class HookedModule(HookedRootModule, Generic[T]):
                     lambda m: m.unwrap() if isinstance(m, HookedModule) else m
                 )
                 setattr(self._module, name, unhooked_container)
+                self._module._modules[name] = unhooked_container
             elif isinstance(submodule, (HookedModule, HookedParameter)):
-                setattr(self._module, name, submodule.unwrap())
+                unwrapped_submodule = submodule.unwrap()
+                setattr(self._module, name, unwrapped_submodule)
+                self._module._modules[name] = unwrapped_submodule
+
+        self._module._modules = {k:v for k,v in self._module._modules.items() if not isinstance(v, HookPoint)}
         return self._module
 
     def _wrap_submodules(self):
         '''
         Recursively wrap submodules with hooks.
         '''
+        #wrap parameters if the module is not a built-in module like for instance nn.Linear
         if not any(isinstance(self._module, built_in_module) for built_in_module in BUILT_IN_MODULES):
             for name, submodule in self._module.named_parameters(recurse=False):
                 if isinstance(submodule, (nn.Parameter, torch.Tensor)):
@@ -306,9 +311,13 @@ class HookedModule(HookedRootModule, Generic[T]):
                 else:
                     raise ValueError(f"Submodule {name} is not a nn.Parameter or torch.Tensor")
 
+        # we iterate over the children of the module and 
+        # wrap them if they are not a HookPoint
         for name, submodule in self._module.named_children():
             if isinstance(submodule, HookPoint):
                 continue
+            # we dont wrap container modules 
+            # but wrap their contents
             elif isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
                 hooked_container = process_container_module(
                     submodule,
@@ -320,10 +329,10 @@ class HookedModule(HookedRootModule, Generic[T]):
 
     def _create_forward(self):
         '''
-        Create a new forward method that calls self.hook_point on the ouput of original forward method
+        Create a new forward method that calls self.hook_point on the output of original forward method
         '''
         original_forward = self._module.forward
-        original_type_hints = get_type_hints(original_forward)
+        original_type_hints = get_type_hints(original_forward) # move typehints
 
         @functools.wraps(original_forward)
         def new_forward(*args: Any, **kwargs: Any) -> Any:

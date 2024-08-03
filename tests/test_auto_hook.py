@@ -182,7 +182,17 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
         #TODO make a better test
         assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
         
-
+@pytest.mark.parametrize("module, input", get_base_cases())
+def test_unwrap_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model_pre = module
+    pre_named_modules = [(name, type(module)) for name, module in model_pre.named_modules()]
+    wrapped_model = auto_hook(model_pre)
+    unwrapped_model = wrapped_model.unwrap()
+    post_named_modules = [(name, type(module)) for name, module in unwrapped_model.named_modules()]
+    assert pre_named_modules == post_named_modules, f"Expected {pre_named_modules}, got {post_named_modules}"
 
 @pytest.mark.parametrize("module, input", get_test_cases())
 def test_hook_fn_bwd_works(

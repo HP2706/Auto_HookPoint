@@ -2,8 +2,6 @@ from modal import Image, gpu, App, Mount
 image = Image.debian_slim().pip_install_from_requirements("dev-requirements.txt")
 app = App(name="test-auto_hookpoint")
 
-
-
 #mount the tests directory
 tests = Mount.from_local_dir(".", remote_path="/root/project")
 #run all tests on modal
