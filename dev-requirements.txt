@@ -3,3 +3,4 @@ torch>=2.0.1
 transformer_lens>=2.0.1
 sae_lens
 modal
+pytest
