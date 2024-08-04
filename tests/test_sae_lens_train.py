@@ -8,39 +8,26 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
 from Auto_HookPoint.utils import get_device
-from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg
+from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg, HookedTransformerConfig_From_AutoConfig
 from tests.test_models import MyModule, gpt2_tokenizer
+from tests.test_adapter import get_hf_cases
 
 
 def test_sae_training_runner_run():
     device = get_device()
-    model = MyModule(device=device).to(device)
-
-    def bla(x):
-        device = get_device()
-        x = torch.randn((1, 10), device=device)    
-        return x
-    
+    _ , model, map_cfg, hooked_transformer_cfg = get_hf_cases()[0]
     model = HookedTransformerAdapter(
+        map_cfg=map_cfg,
         model=model,
         tokenizer=gpt2_tokenizer,
-        cfg=HookedTransformerAdapterCfg(
-            preproc_fn=bla, 
-            return_type="logits",
-            output_logits_soft_cap=0.0,
-            normalization_type="expected_average_only_in",
-            block_attr="layers",
-            embedding_attr="emb",
-            device = device
-        )
-    ).to(device)
-
-
+        hooked_transformer_cfg=hooked_transformer_cfg
+    )
+    print("model.hook_dict", model.hook_dict)
     cfg = LanguageModelSAERunnerConfig(
         model_name="bla",
-        hook_name="layers.0.hook_point",
+        hook_name="model.transformer.h.0.mlp.hook_point",
         hook_layer=0,
-        d_in=10,
+        d_in=hooked_transformer_cfg.d_model,
         dataset_path="monology/pile-uncopyrighted",
         is_dataset_tokenized=False,
         streaming=True,  
@@ -64,7 +51,7 @@ def test_sae_training_runner_run():
         l1_warm_up_steps=1,  # this can help avoid too many dead features initially.
         lp_norm=1.0,  # the L1 penalty (and not a Lp for p < 1)
         train_batch_size_tokens=2,
-        context_size=512,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
+        context_size=hooked_transformer_cfg.n_ctx,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
         # Activation Store Parameters
         log_to_wandb=False,
         n_batches_in_buffer=64,  # controls how many activations we store / shuffle.

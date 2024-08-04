@@ -2,116 +2,146 @@ from typing import Callable, Literal, Optional, TypeVar, Dict, Union
 import torch
 from unittest.mock import patch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformer_lens import HookedTransformerConfig
 import pytest
-from .test_models import gpt2_tokenizer
+from .test_models import gpt2_tokenizer, small_llama_config, small_mixtral_config
 import os
 import sys
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
-from Auto_HookPoint import HookedTransformerAdapter, HookedTransformerAdapterCfg
-from transformer_lens import HookedTransformer, ActivationCache
+assert os.getenv('HF_TOKEN') is not None, "HF_TOKEN environment variable is not set"
 
-#TODO test on the same things as auto_hook 
 
-T = TypeVar('T', bound=nn.Module)
+from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaForCausalLM, MixtralForCausalLM, GPT2Config, GPT2LMHeadModel
+from Auto_HookPoint import HookedTransformerAdapter, HookedTransformerAdapterCfg, HookedTransformerConfig_From_AutoConfig
 
-@pytest.fixture
-def mock_auto_model():
-    with patch('transformers.AutoModelForCausalLM') as mock_model:
-        mock_instance = AutoModelForCausalLM.from_pretrained("gpt2")
-        mock_model.from_pretrained.return_value = mock_instance
-        yield mock_model
 
-@pytest.fixture
-def mock_auto_tokenizer():
-    with patch('transformers.AutoTokenizer') as mock_tokenizer:
-        mock_instance = AutoTokenizer.from_pretrained("gpt2")
-        mock_tokenizer.from_pretrained.return_value = mock_instance
-        yield mock_tokenizer
+small_gpt2_config = GPT2Config(
+    n_embd=16,
+    n_layer=2,
+    n_head=4,
+    n_inner=None,
+    activation_function='gelu_new',
+    n_positions=128,
+    n_ctx=128,
+    vocab_size=50257,
+)
 
-def test_adapter_init_hf():
-    cfg = HookedTransformerAdapterCfg(embedding_attr='transformer.wte', block_attr='transformer.layers')
-    try:
-        model = HookedTransformerAdapter(
-            cfg=cfg,
-            hf_model_name="gpt2",
+def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, HookedTransformerConfig]]:
+    return [
+        (
+            "openai-community/gpt2",
+            GPT2LMHeadModel(config=small_gpt2_config),
+            HookedTransformerAdapterCfg(
+                block_attr='transformer.h',
+                lm_head_attr='lm_head',
+                embedding_attr='transformer.wte',
+                positional_embedding_attr='transformer.wpe',
+                last_layernorm_attr='transformer.ln_f',
+                inter_block_fn = lambda x: x[0]
+            ),
+            HookedTransformerConfig_From_AutoConfig.from_auto_config(
+                small_gpt2_config, 
+                attn_only=True,
+                normalization_type=None,
+                positional_embedding_type='standard',
+                d_vocab=small_gpt2_config.vocab_size
+            ))
+        ,(
+            "meta-llama/Llama-2-7b-hf",
+            LlamaForCausalLM(config=small_llama_config), 
+            HookedTransformerAdapterCfg(
+                block_attr='model.layers',
+                lm_head_attr='lm_head',
+                embedding_attr='model.embed_tokens',
+                positional_embedding_attr='model.embed_tokens',
+                last_layernorm_attr='model.norm',
+                inter_block_fn = lambda x: x[0],
+                create_kwargs = lambda cfg, residual: {
+                    'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
+                }
+            ), 
+            HookedTransformerConfig_From_AutoConfig.from_auto_config(
+                small_llama_config, 
+                attn_only=True,
+                normalization_type=None,
+                positional_embedding_type='rotary',
+                d_vocab=small_llama_config.vocab_size
+            )
+
+        ),
+        (
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            MixtralForCausalLM(config=small_mixtral_config), 
+            HookedTransformerAdapterCfg(
+                block_attr='model.layers',
+                lm_head_attr='lm_head',
+                embedding_attr='model.embed_tokens',
+                positional_embedding_attr='model.embed_tokens',
+                last_layernorm_attr='model.norm',
+                inter_block_fn = lambda x : x[0],
+                create_kwargs = lambda cfg, residual: {
+                    'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
+                }
+            ),
+            HookedTransformerConfig_From_AutoConfig.from_auto_config(
+                small_mixtral_config, 
+                attn_only=True,
+                normalization_type=None,
+                positional_embedding_type='rotary',
+                d_vocab=small_mixtral_config.vocab_size
+            )
         )
-        assert isinstance(model, HookedTransformerAdapter)
-    except Exception as e:
-        pytest.fail(f"Error initializing adapter: {e}")
+    ]
 
-def test_adapter_init_base_case():
-    gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2")
-
-    class MyModule(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10)
-            self.linear = nn.Linear(10, 10)
-
-        def forward(self, x):
-            x = self.emb(x)
-            return self.linear(x)
-
-    cfg = HookedTransformerAdapterCfg(embedding_attr='emb', block_attr=None)
-
-    try:
-        model = HookedTransformerAdapter(
-            model=MyModule(), 
-            tokenizer=gpt2_tokenizer, 
-            cfg=cfg
-        )   
-
-        model = HookedTransformerAdapter(
-            model=MyModule(), 
-            tokenizer=gpt2_tokenizer, 
-            cfg=cfg
-        )
-    except Exception as e:
-        assert False, f"Error initializing adapter: {e}"
-
-
-class MyModule(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10)
-        self.layers = nn.ModuleList([nn.Linear(10, 10) for _ in range(2)])
-
-    def forward(self, x):
-        x = self.emb(x)
-        for layer in self.layers:
-            x = layer(x)
-        return x
-    
-def test_hooked_transformer_adapter_run_with_cache():
-    model = MyModule()
-    adapted_model = HookedTransformerAdapter(
+@pytest.mark.parametrize("model_name, model, map_cfg, hooked_transformer_cfg", get_hf_cases())
+def test_forward(
+    model_name: str, 
+    model : nn.Module, 
+    map_cfg : HookedTransformerAdapterCfg,
+    hooked_transformer_cfg : HookedTransformerConfig
+):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    adapter_model = HookedTransformerAdapter(
+        map_cfg=map_cfg,
         model=model,
-        tokenizer=gpt2_tokenizer,
-        cfg=HookedTransformerAdapterCfg(
-            device = "cpu",
-            preproc_fn=lambda x: model.emb(x), 
-            return_type="logits",
-            output_logits_soft_cap=0.0,
-            normalization_type="expected_average_only_in",
-            block_attr="layers",
-            embedding_attr="emb",
-        )
+        tokenizer=tokenizer,
+        hooked_transformer_cfg=hooked_transformer_cfg
     )
 
-    input_tensor = torch.randint(0, 50257, (1, 10))
-    result = adapted_model.run_with_cache(
-        input_tensor, 
-        start_at_layer=1,
-        stop_at_layer=2
+    adapter_model.forward(
+        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)), 
+        attention_mask=torch.tril(torch.ones(hooked_transformer_cfg.n_ctx, hooked_transformer_cfg.n_ctx)),
+        return_type='logits'
     )
-    
-    assert result is not None, "run_with_cache should return a result"
-    print(result)
-    assert isinstance(result, tuple), "run_with_cache should return a tuple"
-    assert len(result) == 2, "run_with_cache should return a tuple of length 2"
-    assert isinstance(result[0], torch.Tensor), "First element of the result should be a tensor"
-    assert isinstance(result[1], Union[dict, ActivationCache]), "Second element of the result should be a dictionary"
+
+
+@pytest.mark.parametrize(
+    "model_name, model, map_cfg, hooked_transformer_cfg, hook_name",
+    [(*case, hook_name) for case, hook_name in zip(get_hf_cases(), ["model.transformer.h.1.mlp.c_fc.hook_point", "model.layers.0.mlp.hook_point", "model.layers.0.block_sparse_moe.experts.1.w3.hook_point"])]
+)       
+def test_with_cache(
+    model_name: str, 
+    model : nn.Module, 
+    map_cfg : HookedTransformerAdapterCfg,
+    hooked_transformer_cfg : HookedTransformerConfig,
+    hook_name : str
+):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    adapter_model = HookedTransformerAdapter(
+        map_cfg=map_cfg,
+        model=model,
+        tokenizer=tokenizer,
+        hooked_transformer_cfg=hooked_transformer_cfg
+    )
+    print("adapter_model.hook_dict", adapter_model.hook_dict)
+    if hook_name not in adapter_model.hook_dict.keys():
+        raise ValueError(f"Hook {hook_name} not found in model {model_name}")
+    adapter_model.run_with_cache(
+        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)), 
+        names_filter=hook_name,
+        attention_mask=torch.tril(torch.ones(hooked_transformer_cfg.n_ctx, hooked_transformer_cfg.n_ctx)),
+        return_type='logits'
+    )

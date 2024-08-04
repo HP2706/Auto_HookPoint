@@ -1,10 +1,16 @@
 import logging
 from transformer_lens.hook_points import HookedRootModule,  HookPoint
 from transformer_lens.components import PosEmbed, Unembed
+from transformer_lens.utilities import devices
 from transformer_lens.HookedTransformer import (
     HookedTransformer, 
-    NON_HF_HOSTED_MODEL_NAMES
+    HookedTransformerKeyValueCache,
+    NON_HF_HOSTED_MODEL_NAMES,
+    Output,
+    Loss,
+    USE_DEFAULT_VALUE
 )
+from torch.nn import functional as F
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedTokenizer, AutoConfig, PretrainedConfig
 from .hook import auto_hook
 from typing import Any, Iterable, Protocol, Sequence, Tuple, Union, List, Optional, Literal, cast, overload, Callable
@@ -15,7 +21,9 @@ import torch
 from dataclasses import dataclass
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 import os
-
+from transformer_lens import utils
+from jaxtyping import Int
+from typing import overload
 
 @dataclass
 class HookedTransformerConfig_From_AutoConfig(HookedTransformerConfig):
@@ -47,7 +55,9 @@ class HookedTransformerAdapterCfg:
     lm_head_attr: str
     embedding_attr: str
     positional_embedding_attr: str
-    last_layernorm_attr: Optional[str]
+    last_layernorm_attr: Optional[str] = None
+    inter_block_fn : Optional[Callable[[Any], Any]] = None
+    create_kwargs : Optional[Callable[[HookedTransformerConfig, Any], dict[str, Any]]] = None
 
 class AdaptedPosEmbed(PosEmbed):
     '''
@@ -64,10 +74,16 @@ class AdaptedUnembed(Unembed):
     A class that adapts a regular nn.Linear Unembed to a HookedTransformer Unembed
     '''
     @classmethod
-    def from_regular_unembed(cls, unembed: nn.Linear, cfg : HookedTransformerConfig):
+    def from_regular_unembed(cls, unembed: nn.Linear, cfg: HookedTransformerConfig):
         myclass = cls(cfg)
-        myclass.W_U = unembed.weight
-        myclass.b_U = unembed.bias
+        # Check if we need to transpose the weight matrix
+
+        myclass.W_U = nn.Parameter(unembed.weight.T)
+        
+        if unembed.bias is not None:
+            myclass.b_U = unembed.bias
+        else:
+            myclass.b_U = nn.Parameter(torch.zeros((cfg.d_vocab,)))
         return myclass
 
 class HookedTransformerAdapter(HookedTransformer):
@@ -192,10 +208,12 @@ class HookedTransformerAdapter(HookedTransformer):
         self.device = hooked_transformer_cfg.device
         
         unembed = self._get_attr_recursively(self.model, map_cfg.lm_head_attr)
+
         self.unembed = AdaptedUnembed.from_regular_unembed(unembed, self.cfg)
 
         self.embed = self._get_attr_recursively(self.model, map_cfg.embedding_attr)
         self.hook_embed = HookPoint()  # [batch, pos, d_model]
+
         if map_cfg.last_layernorm_attr is not None:
             self.ln_final = self._get_attr_recursively(self.model, map_cfg.last_layernorm_attr)
 
@@ -210,9 +228,106 @@ class HookedTransformerAdapter(HookedTransformer):
         self.blocks = self._get_model_blocks()
       
         self.setup()
+        #replace model.model with model for naming consistency
+        self.hook_dict = {k.replace("model.model", "model"): v for k, v in self.hook_dict.items()}
+        self.mod_dict = {k.replace("model.model", "model"): v for k, v in self.mod_dict.items()}
         if move_to_device:
             assert self.device is not None, "device is not provided"
             self.to(self.device)
+
+    def forward(
+        self,
+        input: Union[
+            str,
+            List[str],
+            Int[torch.Tensor, "batch pos"],
+            Float[torch.Tensor, "batch pos d_model"],
+        ],
+        return_type: Optional[str] = "logits",
+        loss_per_token: bool = False,
+        prepend_bos: Optional[Union[bool, None]] = USE_DEFAULT_VALUE,
+        padding_side: Optional[Literal["left", "right"]] = USE_DEFAULT_VALUE,
+        start_at_layer: Optional[int] = None,
+        tokens: Optional[Int[torch.Tensor, "batch pos"]] = None,
+        shortformer_pos_embed: Optional[Float[torch.Tensor, "batch pos d_model"]] = None, #NOTE NOT USED
+        attention_mask: Optional[torch.Tensor] = None,  # [batch pos]
+        stop_at_layer: Optional[int] = None,
+        past_kv_cache: Optional[HookedTransformerKeyValueCache] = None, #NOTE NOT USED
+    ) -> Union[
+        None,
+        Float[torch.Tensor, "batch pos d_vocab"],
+        Loss,
+        Tuple[Float[torch.Tensor, "batch pos d_vocab"], Loss],
+    ]:
+        '''a slightly modified version of HookedTransformer.forward()'''
+        with utils.LocallyOverridenDefaults(
+            self, prepend_bos=prepend_bos, padding_side=padding_side
+        ):
+            if start_at_layer is None:
+                (
+                    residual,
+                    tokens,
+                    shortformer_pos_embed,
+                    attention_mask,
+                ) = self.input_to_embed(
+                    input,
+                    prepend_bos=prepend_bos,
+                    padding_side=padding_side,
+                    past_kv_cache=None, #we do no allow kv_cache
+                )
+            else:
+                assert type(input) == torch.Tensor
+                residual = input
+            if start_at_layer is None:
+                start_at_layer = 0
+
+            if self.map_cfg.create_kwargs is not None:
+                kwargs = self.map_cfg.create_kwargs(self.cfg, residual)
+            else: 
+                kwargs = {}
+                
+            blocks_and_idxs = list(zip(range(self.cfg.n_layers), self.blocks))
+            for i, block in blocks_and_idxs[start_at_layer:stop_at_layer]:  # type: ignore
+                residual = block(
+                    residual,
+                    attention_mask=attention_mask,
+                    **kwargs
+                )  # [batch, pos, d_model]
+                if self.map_cfg.inter_block_fn is not None:
+                    residual = self.map_cfg.inter_block_fn(residual)
+                #we use a function to do ensure residual is a Tensor 
+                # NOTE in the future this might be done via a hook_point
+
+            if stop_at_layer is not None:
+                return residual
+
+            if stop_at_layer is not None:
+                # When we stop at an early layer, we end here rather than doing further computation
+                return residual
+            if self.cfg.normalization_type is not None:
+                residual = self.ln_final(residual)  # [batch, pos, d_model]
+            if return_type is None:
+                return None
+            else:
+                logits = self.unembed(residual)  # [batch, pos, d_vocab]
+                if self.cfg.output_logits_soft_cap > 0.0:
+                    logits = self.cfg.output_logits_soft_cap * F.tanh(
+                        logits / self.cfg.output_logits_soft_cap
+                    )
+                if return_type == "logits":
+                    return logits
+                else:
+                    assert (
+                        tokens is not None
+                    ), "tokens must be passed in if return_type is 'loss' or 'both'"
+                    loss = self.loss_fn(logits, tokens, per_token=loss_per_token)
+                    if return_type == "loss":
+                        return loss
+                    elif return_type == "both":
+                        return Output(logits, loss)
+                    else:
+                        logging.warning(f"Invalid return_type passed in: {return_type}")
+                        return None
 
     def validate_args(
         self, 
@@ -234,35 +349,26 @@ class HookedTransformerAdapter(HookedTransformer):
             
             wrapped_blocks = []
             for block in blocks:
-                wrapped_blocks.append(self._wrap_block(block))
+                wrapped_blocks.append(block)
             
             return wrapped_blocks
 
-    def _wrap_block(self, block: nn.Module) -> nn.Module:
+    """ def _wrap_block(self, block: nn.Module) -> nn.Module:
         original_forward = block.forward
         def wrapped_forward(*args, **kwargs):
             '''
             Wraps the forward method of a block to ensure that the input is passed to the correct position
             '''
+            # we ignore transformer_lens kwargs
             return original_forward(*args)
         block.forward = wrapped_forward
-        return block
+        return block """
 
     def _get_attr_recursively(self, obj, attr : str) -> Any:
         attrs = attr.split('.')
         for a in attrs:
             obj = getattr(obj, a)
         return obj
-
-    def setup(self):
-        '''
-        Override HookedRootModule.setup 
-        to avoid the _module wrapper in names
-        '''
-        self.hook_dict = self.model.hook_dict
-        self.mod_dict = self.model.mod_dict
-        for name, hook_point in self.hook_dict.items():
-            hook_point.name = name
 
     @property
     def W_E(self) -> Float[torch.Tensor, "d_vocab d_model"]:

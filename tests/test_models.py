@@ -35,7 +35,9 @@ gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2")
 class MyModule(nn.Module):
     def __init__(self, device):
         super().__init__()
+        self.lm_head = nn.Linear(10, gpt2_tokenizer.vocab_size, device=device) #DUMMY
         self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10, device=device)
+        self.pos_emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10, device=device)
         self.layers = nn.ModuleList([nn.Linear(10, 10, device=device) for _ in range(2)])
 
     def forward(self, x):
