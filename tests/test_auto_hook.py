@@ -277,6 +277,16 @@ def test_generate_expected_hookpoints(
     diff2 = list(set(hook_expected_2) - set(no_hook_expected))
     assert set(no_hook_expected) == set(hook_expected_2), f"Expected hookpoints do not match: {no_hook_expected} != {hook_expected_2} diff1: {diff1} diff2: {diff2}"
 
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
+def test_hook_point_name(
+    module: T, 
+    _
+):
+    model = auto_hook(module)
+    for name, hook_point in model.hook_dict.items():
+        assert hook_point.name is not None, f"Hook point {name} has no name"
+
+
 def run_hook_test(model, hook_name, input_data):
     hook_called = {'value': False}
     

@@ -1,32 +1,36 @@
 from sae_lens import SAETrainingRunner, LanguageModelSAERunnerConfig
+from transformer_lens import HookedTransformerConfig
+from torch import nn
+import pytest
 import os
 import sys
 
-import torch
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
+from tests.test_models import gpt2_tokenizer
+from tests.test_adapter import get_test_cases, TestCase
 from Auto_HookPoint.utils import get_device
-from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg, HookedTransformerConfig_From_AutoConfig
-from tests.test_models import MyModule, gpt2_tokenizer
-from tests.test_adapter import get_hf_cases
+from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg
 
-
-def test_sae_training_runner_run():
+@pytest.mark.parametrize("test_case", get_test_cases())
+def test_forward(
+    test_case : TestCase
+):
+    model_name, model, map_cfg, hooked_transformer_cfg, hook_name, layer = test_case
     device = get_device()
-    _ , model, map_cfg, hooked_transformer_cfg = get_hf_cases()[0]
     model = HookedTransformerAdapter(
-        map_cfg=map_cfg,
+        adapter_cfg=map_cfg,
         model=model,
         tokenizer=gpt2_tokenizer,
         hooked_transformer_cfg=hooked_transformer_cfg
     )
     print("model.hook_dict", model.hook_dict)
     cfg = LanguageModelSAERunnerConfig(
-        model_name="bla",
-        hook_name="model.transformer.h.0.mlp.hook_point",
-        hook_layer=0,
+        model_name=model_name,
+        hook_name=hook_name,
+        hook_layer=layer,
         d_in=hooked_transformer_cfg.d_model,
         dataset_path="monology/pile-uncopyrighted",
         is_dataset_tokenized=False,

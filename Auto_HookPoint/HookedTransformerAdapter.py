@@ -41,6 +41,7 @@ class HookedTransformerConfig_From_AutoConfig(HookedTransformerConfig):
             n_layers=auto_config.num_hidden_layers,
             d_model=auto_config.hidden_size,
             n_ctx=auto_config.max_position_embeddings,
+            d_vocab=auto_config.vocab_size,
             d_head=auto_config.hidden_size // auto_config.num_attention_heads, #NOTE will this work for all models?
             **kwargs
         )
@@ -51,13 +52,11 @@ class HookedTransformerAdapterCfg:
     Defines the mapping between the input model 
     and the HookedTransformer special attributes
     '''
-    block_attr: str
-    lm_head_attr: str
-    embedding_attr: str
-    positional_embedding_attr: str
-    last_layernorm_attr: Optional[str] = None
-    inter_block_fn : Optional[Callable[[Any], Any]] = None
-    create_kwargs : Optional[Callable[[HookedTransformerConfig, Any], dict[str, Any]]] = None
+    mappings: dict[str, str] # map parameter attributes
+    inter_block_fn: Optional[Callable[[Any], Any]] = lambda x: x[0] 
+    # often a block return (hidden_state, ..) we want to call the next block with the hidden_state only
+    create_kwargs: Optional[Callable[[HookedTransformerConfig, Any], dict[str, Any]]] = None
+    # additional kwargs to pass to the model
 
 class AdaptedPosEmbed(PosEmbed):
     '''
@@ -94,7 +93,7 @@ class HookedTransformerAdapter(HookedTransformer):
     @overload
     def __init__(
         self,
-        map_cfg: HookedTransformerAdapterCfg,
+        adapter_cfg: HookedTransformerAdapterCfg,
         hooked_transformer_cfg: HookedTransformerConfig,
         hf_model_name: str,
         *,
@@ -105,7 +104,7 @@ class HookedTransformerAdapter(HookedTransformer):
     @overload
     def __init__(
         self,
-        map_cfg: HookedTransformerAdapterCfg,
+        adapter_cfg: HookedTransformerAdapterCfg,
         hooked_transformer_cfg: HookedTransformerConfig,
         *,
         model: nn.Module,
@@ -116,7 +115,7 @@ class HookedTransformerAdapter(HookedTransformer):
 
     def __init__(
         self,
-        map_cfg: HookedTransformerAdapterCfg,
+        adapter_cfg: HookedTransformerAdapterCfg,
         hooked_transformer_cfg: HookedTransformerConfig,
         hf_model_name: Optional[str] = None,
         *,
@@ -138,7 +137,7 @@ class HookedTransformerAdapter(HookedTransformer):
 
 
         Args:
-            map_cfg (HookedTransformerAdapterCfg): Configuration for adapter setup.
+            adapter_cfg (HookedTransformerAdapterCfg): Configuration for adapter setup.
             hooked_transformer_cfg (HookedTransformerConfig): Configuration for HookedTransformer.
             hf_model_name (Optional[str]): Name of the Hugging Face model to load.
             model (Optional[nn.Module]): Pre-loaded Hugging Face model.
@@ -149,13 +148,14 @@ class HookedTransformerAdapter(HookedTransformer):
 
         Note:
             Provide either hf_model_name or both model and tokenizer.
-            map_cfg and hooked_transformer_cfg are always required.
+            adapter_cfg and hooked_transformer_cfg are always required.
         """
         #only initialize HookedRootModule not HookedTransformer.__init__
         HookedRootModule.__init__(self)
         self.validate_args(hf_model_name, model, tokenizer)
 
-        self.map_cfg = map_cfg
+        self.adapter_cfg = adapter_cfg
+        self.cfg = HookedTransformerConfig.unwrap(hooked_transformer_cfg)
 
         if isinstance(hf_model_name, str):
             self.model = auto_hook(AutoModelForCausalLM.from_pretrained(hf_model_name).to(hooked_transformer_cfg.device))
@@ -164,8 +164,8 @@ class HookedTransformerAdapter(HookedTransformer):
         else:
             raise ValueError("Invalid input. Provide either a model name (str) or both model and tokenizer objects.")
 
+        self.apply_mappings()
         #this is needed for full transformer_lens compatibility
-        self.cfg = HookedTransformerConfig.unwrap(hooked_transformer_cfg)
 
         if tokenizer is not None:
             self.set_tokenizer(tokenizer, default_padding_side=default_padding_side)
@@ -207,33 +207,46 @@ class HookedTransformerAdapter(HookedTransformer):
         self.tokenizer.pad_token = self.tokenizer.eos_token #type: ignore 
         self.device = hooked_transformer_cfg.device
         
-        unembed = self._get_attr_recursively(self.model, map_cfg.lm_head_attr)
-
-        self.unembed = AdaptedUnembed.from_regular_unembed(unembed, self.cfg)
-
-        self.embed = self._get_attr_recursively(self.model, map_cfg.embedding_attr)
-        self.hook_embed = HookPoint()  # [batch, pos, d_model]
-
-        if map_cfg.last_layernorm_attr is not None:
-            self.ln_final = self._get_attr_recursively(self.model, map_cfg.last_layernorm_attr)
-
-        if self.cfg.positional_embedding_type != "rotary":
-            regular_pos_embed = self._get_attr_recursively(self.model, map_cfg.positional_embedding_attr)
-            self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(regular_pos_embed, self.cfg)
-            self.hook_pos_embed = HookPoint()  # [batch, pos, d__dictmodel]
-
         if self.cfg.use_hook_tokens:
             self.hook_tokens = HookPoint()  # [batch, pos]
-
-        self.blocks = self._get_model_blocks()
       
         self.setup()
-        #replace model.model with model for naming consistency
-        self.hook_dict = {k.replace("model.model", "model"): v for k, v in self.hook_dict.items()}
-        self.mod_dict = {k.replace("model.model", "model"): v for k, v in self.mod_dict.items()}
+
         if move_to_device:
             assert self.device is not None, "device is not provided"
             self.to(self.device)
+
+    def setup(self):
+        super().setup()
+
+        def update_dict(d):
+            return {k.replace("model.model", "model"): v for k, v in d.items()}
+
+        self.hook_dict = update_dict(self.hook_dict)
+        self.mod_dict = update_dict(self.mod_dict)
+
+        for d in [self.hook_dict, self.mod_dict]:
+            for k, v in d.items():
+                if isinstance(v, HookPoint):
+                    v.name = k
+
+    def apply_mappings(self):
+        for ht_attr, model_attr in self.adapter_cfg.mappings.items():
+            value = self._get_attr_recursively(self.model, model_attr)
+            if ht_attr == 'blocks':
+                self.blocks = self._wrap_blocks(value)
+            elif ht_attr == 'unembed':
+                self.unembed = AdaptedUnembed.from_regular_unembed(value, self.cfg)
+            elif ht_attr == 'embed':
+                self.embed = value
+                self.hook_embed = HookPoint()
+            elif ht_attr == 'pos_embed':
+                self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(value, self.cfg)
+                self.hook_pos_embed = HookPoint()
+            elif ht_attr == 'ln_final':
+                self.ln_final = value
+            else:
+                setattr(self, ht_attr, value)
 
     def forward(
         self,
@@ -281,8 +294,8 @@ class HookedTransformerAdapter(HookedTransformer):
             if start_at_layer is None:
                 start_at_layer = 0
 
-            if self.map_cfg.create_kwargs is not None:
-                kwargs = self.map_cfg.create_kwargs(self.cfg, residual)
+            if self.adapter_cfg.create_kwargs is not None:
+                kwargs = self.adapter_cfg.create_kwargs(self.cfg, residual)
             else: 
                 kwargs = {}
                 
@@ -293,8 +306,8 @@ class HookedTransformerAdapter(HookedTransformer):
                     attention_mask=attention_mask,
                     **kwargs
                 )  # [batch, pos, d_model]
-                if self.map_cfg.inter_block_fn is not None:
-                    residual = self.map_cfg.inter_block_fn(residual)
+                if self.adapter_cfg.inter_block_fn is not None:
+                    residual = self.adapter_cfg.inter_block_fn(residual)
                 #we use a function to do ensure residual is a Tensor 
                 # NOTE in the future this might be done via a hook_point
 
@@ -338,31 +351,10 @@ class HookedTransformerAdapter(HookedTransformer):
         if (hf_model_name is not None) == (model is not None or tokenizer is not None):
             raise ValueError("Provide either a model name or both model and tokenizer objects, not both or neither.")
 
-    def _get_model_blocks(self) -> Sequence[nn.Module]:
-        var_name = self.map_cfg.block_attr
-        if var_name is None:
-            raise ValueError("block_attr is required when using start_at_layer and stop_at_layer")
-        else:
-            blocks = self._get_attr_recursively(self.model, var_name)
-            assert isinstance(blocks, Iterable), f"Expected an iterable of modules, got {type(blocks)}"
-            assert isinstance(blocks, Sized), f"Expected module to be have attribute __len__, got {type(blocks)}"
-            
-            wrapped_blocks = []
-            for block in blocks:
-                wrapped_blocks.append(block)
-            
-            return wrapped_blocks
-
-    """ def _wrap_block(self, block: nn.Module) -> nn.Module:
-        original_forward = block.forward
-        def wrapped_forward(*args, **kwargs):
-            '''
-            Wraps the forward method of a block to ensure that the input is passed to the correct position
-            '''
-            # we ignore transformer_lens kwargs
-            return original_forward(*args)
-        block.forward = wrapped_forward
-        return block """
+    def _wrap_blocks(self, blocks):
+        assert isinstance(blocks, Iterable) and isinstance(blocks, Sized), \
+            f"Expected an iterable of modules with __len__, got {type(blocks)}"
+        return list(blocks)
 
     def _get_attr_recursively(self, obj, attr : str) -> Any:
         attrs = attr.split('.')

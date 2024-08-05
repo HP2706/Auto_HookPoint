@@ -9,7 +9,7 @@ from transformers import MixtralForCausalLM, MixtralModel
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
-from Auto_HookPoint import HookedTransformerAdapter, HookedTransformerAdapterCfg
+from Auto_HookPoint import HookedTransformerAdapter, HookedTransformerAdapterCfg, HookedTransformerConfig_From_AutoConfig
 from Auto_HookPoint.utils import get_device
 
 #most of the credit for this example goes to https://gist.github.com/joelburget
@@ -28,6 +28,7 @@ from Auto_HookPoint.utils import get_device
 # Setup
 model_name = "joelb/Mixtral-8x7B-1l"
 config = AutoConfig.from_pretrained(model_name)
+
 device = get_device()
 total_training_steps = 15_000  # probably we should do more
 batch_size = 8
@@ -39,10 +40,10 @@ l1_warm_up_steps = total_training_steps // 20  # 5% of training
 
 #sae_lens
 cfg = LanguageModelSAERunnerConfig(
-    model_name=model_name,
+    #model_name=model_name,
     hook_name='model.layers.0.post_attention_layernorm.hook_point',
     hook_layer=0,
-    d_in=4096,
+    d_in=config.hidden_size,
     dataset_path="monology/pile-uncopyrighted",
     is_dataset_tokenized=False,
     streaming=True,  
@@ -90,23 +91,33 @@ cfg = LanguageModelSAERunnerConfig(
 
 torch.manual_seed(42)
 
-def create_preproc_fn(model):
-    def preproc_fn(x):
-        return model.model.embed_tokens(x)*10
-    return preproc_fn
+
+adapter_cfg = HookedTransformerAdapterCfg(
+    mappings={
+        'blocks': 'model.layers',
+        'unembed': 'lm_head',
+        'embed': 'model.embed_tokens',
+        'pos_embed' : 'model.rotary_emb',
+        'ln_final': 'model.norm',
+    },
+    inter_block_fn = lambda x : x[0],
+    create_kwargs = lambda cfg, residual: { 
+        'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
+    }
+)
+
+hooked_transformer_cfg = HookedTransformerConfig_From_AutoConfig.from_auto_config(
+    config, 
+    attn_only=True,
+    normalization_type=None,
+    positional_embedding_type='rotary',
+)
 
 if __name__ == "__main__":
     hooked_model = HookedTransformerAdapter(
-        HookedTransformerAdapterCfg(
-            lm_head_attr="lm_head",
-            device=device, 
-            n_ctx=128,
-            block_attr="model.layers",
-            embedding_attr="model.embed_tokens",
-            last_layernorm_attr="model.norm",
-            preproc_fn_creator=create_preproc_fn
-        ),
-        model_name
+        adapter_cfg=adapter_cfg,
+        hooked_transformer_cfg=hooked_transformer_cfg,
+        hf_model_name=model_name,
     ).to(device)
 
     cfg.device = device

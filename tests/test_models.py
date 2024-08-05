@@ -16,7 +16,7 @@ def get_base_cases():
         (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)})
     ]
 
-def get_hf_cases():
+def get_hf_cases() -> list[tuple[nn.Module, dict]]:
     return [
         (LlamaForCausalLM(config=small_llama_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True}),
         (MixtralForCausalLM(config=small_mixtral_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True})
@@ -49,8 +49,8 @@ class MyModule(nn.Module):
 
 small_mixtral_config = MixtralConfig(
     vocab_size=1000,
-    hidden_size=18,
-    intermediate_size=32,
+    hidden_size=8,
+    intermediate_size=16,
     num_hidden_layers=1,
     num_attention_heads=1,
     num_key_value_heads=1,

@@ -191,6 +191,7 @@ class HookedParameter(nn.Parameter, Generic[P]):
         '''
         Set up the module and hook dictionaries.
         '''
+        self.hook_point.name = 'hook_point'
         self.mod_dict = {'param': self.param, 'hook_point': self.hook_point}
         self.hook_dict = {'hook_point': self.hook_point}
 
@@ -266,9 +267,11 @@ class HookedModule(HookedRootModule, Generic[T]):
             
             if isinstance(child, HookedModule):
                 hook_point_name = f"{full_name}.hook_point"
+                child.hook_point.name = hook_point_name
                 self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = child.hook_point
                 self._populate_dicts(child._module, full_name)
             elif isinstance(child, HookPoint):
+                child.name = full_name
                 self.hook_dict[full_name] = child
             else:
                 self._populate_dicts(child, full_name)
@@ -280,6 +283,7 @@ class HookedModule(HookedRootModule, Generic[T]):
                 full_name = full_name.replace('._module', '')
                 self.mod_dict[full_name] = param
                 hook_point_name = f'{full_name}.hook_point'
+                param.hook_point.name = hook_point_name
                 self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = param.hook_point
 
     def unwrap(self) -> T:
