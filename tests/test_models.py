@@ -5,6 +5,8 @@ import torch
 from transformers.models.llama import LlamaForCausalLM
 from transformers.models.mixtral import MixtralForCausalLM
 from transformer_lens import HookedTransformerConfig
+from transformers import AutoTokenizer
+
 
 def get_base_cases():
     return [
@@ -14,24 +16,41 @@ def get_base_cases():
         (SimpleNestedModuleList(), {'x' : torch.randn(1, 10)})
     ]
 
-def get_hf_cases():
+def get_hf_cases() -> list[tuple[nn.Module, dict]]:
     return [
         (LlamaForCausalLM(config=small_llama_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True}),
         (MixtralForCausalLM(config=small_mixtral_config), {'input_ids': torch.randint(0, 10, (10, 10)), 'labels': torch.randint(0, 10, (10, 10)),'return_dict': True})
     ]
 
 #module instance, input 
-def get_test_cases():
+def get_combined_cases():
     return [
         *get_base_cases(),
         *get_hf_cases()
     ]
 
 
+gpt2_tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+class MyModule(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self.lm_head = nn.Linear(10, gpt2_tokenizer.vocab_size, device=device) #DUMMY
+        self.emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10, device=device)
+        self.pos_emb = nn.Embedding(gpt2_tokenizer.vocab_size, 10, device=device)
+        self.layers = nn.ModuleList([nn.Linear(10, 10, device=device) for _ in range(2)])
+
+    def forward(self, x):
+        x = self.emb(x)
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+
 small_mixtral_config = MixtralConfig(
     vocab_size=1000,
-    hidden_size=18,
-    intermediate_size=32,
+    hidden_size=8,
+    intermediate_size=16,
     num_hidden_layers=1,
     num_attention_heads=1,
     num_key_value_heads=1,

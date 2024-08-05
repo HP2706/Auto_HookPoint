@@ -3,7 +3,7 @@ import sys
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
-
+import copy
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Auto_HookPoint.hook import auto_hook
 from transformer_lens.hook_points import HookPoint
@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .test_models import get_test_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
+from .test_models import get_combined_cases, get_base_cases
 #for testing 
 
 T = TypeVar('T', bound=nn.Module)
@@ -28,34 +28,57 @@ def check_hook_types(
 ):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
+def generic_check_hook_fn_bwd_works(model: T, input: Dict[str, torch.Tensor]):
+    counter = {'value': 0, 'hooks': []}
+    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
+        counter['value'] += 1
+        counter['hooks'].append(hook_name)
+        if isinstance(grad_output, tuple):
+            if any(g is not None and g.requires_grad for g in grad_output):
+                return grad_output
+        elif grad_output is not None and grad_output.requires_grad:
+            return (grad_output,)
+    
+    generic_hook_check(model, input, backward_hook, is_backward=True, counter=counter)
+    return counter  # Return the counter for assertion in the test function
+
+def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
+    counter = {'value': 0, 'hooks': []}
+    def hook_wrapper(x, hook=None, hook_name=None):
+        counter['value'] += 1
+        counter['hooks'].append(hook_name)
+        return x
+    generic_hook_check(model, input, hook_wrapper, is_backward=False, counter=counter)
+    return counter  # Return the counter for assertion in the test function
+
 def generic_hook_check(
     model: T,
     input: Dict[str, torch.Tensor],
     hook_fn,
-    is_backward: bool
+    is_backward: bool,
+    counter: Dict[str, Any]
 ):
-    counter = {'value': 0, 'hooks': []}
-
-    hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
-    hooks = [(name, partial(hook_fn, hook_name=name)) for name in hook_names]
+    hooks = [(name, partial(hook_fn, hook_name=name)) for (name, _) in model.hook_dict.items()]
     
     if is_backward:
         output = model.run_with_hooks(**input, bwd_hooks=hooks)
         loss = get_loss(output)
         loss.backward()
     else:
-        model.run_with_hooks(**input, fwd_hooks=hooks)
-
-    unused_hooks = set(hook_names) - set(counter['hooks'])
+        output = model.run_with_hooks(**input, fwd_hooks=hooks)
+    
     hooks_multiple_times = list(set([hook for hook in counter['hooks'] if counter['hooks'].count(hook) > 1]))
     
+    hook_names = [hook_name for hook_name, _ in hooks]
     assert (
-        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 or len(unused_hooks) > 0
+        counter['value'] == len(hooks)
     ), (
-        f"counter['value'] == len(hook_names) and len(hooks_multiple_times) == 0, "
-        f"{counter['value']} == {len(hook_names)}, "
-        f"{hook_names} unused: {unused_hooks} "
-        f"hooks called multiple times: {hooks_multiple_times}"
+        f"counter['value'] = {counter['value']}",
+        f"len(hooks) = {len(hooks)}",
+        f"{counter['value']} == {len(hook_names)}",
+        f"hooks called multiple times: {hooks_multiple_times}",
+        f"hooks not called: {set(hook_names) - set(counter['hooks'])}",
+        f"hooks called: {set(counter['hooks'])}"
     )
     print("TEST PASSED")
 
@@ -71,26 +94,6 @@ def get_loss(output):
         raise ValueError("No suitable tensor found for backward pass")
 
 
-def generic_check_hook_fn_bwd_works(model: T, input: Dict[str, torch.Tensor]):
-    counter = {'value': 0, 'hooks': []}
-    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        if isinstance(grad_output, tuple):
-            if any(g is not None and g.requires_grad for g in grad_output):
-                return grad_output
-        elif grad_output is not None and grad_output.requires_grad:
-            return (grad_output,)
-    
-    generic_hook_check(model, input, backward_hook, is_backward=True)
-
-def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
-    counter = {'value': 0, 'hooks': []}
-    def hook_wrapper(x, hook=None, hook_name=None):
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        return x
-    generic_hook_check(model, input, hook_wrapper, is_backward=False)
 
 def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)
@@ -112,7 +115,7 @@ def generic_check_all_hooks(model):
         )
     print("TEST PASSED")
 
-@pytest.mark.parametrize("module, input", get_test_cases())
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_hook_fn_fwd_works(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -182,9 +185,56 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
         #TODO make a better test
         assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
         
+@pytest.mark.parametrize("module, input", get_combined_cases())
+def test_unwrap_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model_pre = module
+    pre_named_modules = [(name, type(module)) for name, module in model_pre.named_modules()]
+    wrapped_model = auto_hook(model_pre)
+    unwrapped_model = wrapped_model.unwrap()
+    post_named_modules = [(name, type(module)) for name, module in unwrapped_model.named_modules()]
+    assert pre_named_modules == post_named_modules, f"Expected {pre_named_modules}, got {post_named_modules}"
 
 
-@pytest.mark.parametrize("module, input", get_test_cases())
+@pytest.mark.parametrize("module, input", get_combined_cases())
+def test_to_works(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    print("module parameters", list(module.named_parameters()))
+    model = auto_hook(module.to(torch.float32))
+    model.to(torch.float16)
+    try:
+        assert next((model.parameters())).dtype == torch.float16, f"Expected dtype '{torch.float16}', got {model.linear.weight.dtype}"
+    except StopIteration:
+        raise ValueError(f"No parameters found in the model {list(model.named_parameters())}")
+
+@pytest.mark.parametrize("module, input", get_combined_cases())
+def test_wrapping(
+    module: T, 
+    input : Dict[str, torch.Tensor]
+):
+    model_pre = module
+    pre_named_parameters = [(name, param.clone().detach()) for name, param in model_pre.named_parameters()]
+    model = auto_hook(model_pre)
+
+    post_named_parameters = list(model.named_parameters())
+
+    incorrect_elms = []
+    for pre_name, pre_param in pre_named_parameters:
+        found = False
+        for post_name, post_param in post_named_parameters:
+            if pre_name == post_name and torch.equal(pre_param, post_param):
+                found = True
+                break
+        if not found:
+            incorrect_elms.append((pre_name, pre_param))
+
+    assert len(incorrect_elms) == 0, f"These elements should be in post_named_parameters: {incorrect_elms}, but found only {[name for name, _ in post_named_parameters]}"
+
+@pytest.mark.parametrize("module, input", get_combined_cases())
 def test_hook_fn_bwd_works(
     module: T, 
     input : Dict[str, torch.Tensor]
@@ -192,7 +242,7 @@ def test_hook_fn_bwd_works(
     model = auto_hook(module)
     generic_check_hook_fn_bwd_works(model, input)
 
-@pytest.mark.parametrize("module, _", get_test_cases())
+@pytest.mark.parametrize("module, _", get_combined_cases())
 def test_check_all_hooks(
     module: T, 
     _
@@ -200,7 +250,7 @@ def test_check_all_hooks(
     model = auto_hook(module)
     generic_check_all_hooks(model)
 
-@pytest.mark.parametrize("module, _", get_test_cases())
+@pytest.mark.parametrize("module, _", get_combined_cases())
 def test_check_unwrap_works(
     module: T, 
     _,
@@ -209,7 +259,7 @@ def test_check_unwrap_works(
     unwrapped = model.unwrap()
     assert unwrapped == module, f"Unwrapped {unwrapped} is not the same as the original {module}"
     
-@pytest.mark.parametrize("module, _ ", get_test_cases())
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
 def test_duplicate_hooks(
     module: T, 
     _
@@ -218,7 +268,7 @@ def test_duplicate_hooks(
     hooks = [hook_name for hook_name, _ in model.hook_dict.items()]
     assert len(hooks) == len(set(hooks)), f"Duplicate hooks: {hooks}, hooks: {hooks} duplicates: {get_duplicates(hooks)}"
 
-@pytest.mark.parametrize("module, _ ", get_test_cases())
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
 def test_generate_expected_hookpoints(
     module: T, 
     _, 
@@ -229,6 +279,30 @@ def test_generate_expected_hookpoints(
     diff1 = list(set(no_hook_expected) - set(hook_expected_2)) 
     diff2 = list(set(hook_expected_2) - set(no_hook_expected))
     assert set(no_hook_expected) == set(hook_expected_2), f"Expected hookpoints do not match: {no_hook_expected} != {hook_expected_2} diff1: {diff1} diff2: {diff2}"
+
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
+def test_hook_point_name(
+    module: T, 
+    _
+):
+    model = auto_hook(module)
+    for name, hook_point in model.hook_dict.items():
+        assert hook_point.name is not None, f"Hook point {name} has no name"
+
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
+def test_auto_hook_module_naming(
+    module: T, 
+    _
+):
+    modules = [(name, module.__class__.__name__) for name, module in module.named_modules()]
+    hooked_model = auto_hook(module)
+    auto_modules = [(name, module.__class__.__name__) for name, module in hooked_model.named_modules() if not isinstance(module, HookPoint)]
+    assert len(modules) == len(auto_modules), f"Modules length do not match: {len(modules)} != {len(auto_modules)}"
+
+    for (name1, module_name1), (name2, module_name2) in zip(modules, auto_modules):
+        assert name1 == name2, f"Names do not match: {name1} != {name2}"
+        print(module_name1, module_name2)
+        assert module_name1 == module_name2, f"Modules class names do not match: {module_name1} != {module_name2}"
 
 def run_hook_test(model, hook_name, input_data):
     hook_called = {'value': False}
@@ -242,7 +316,6 @@ def run_hook_test(model, hook_name, input_data):
     assert hook_called['value'], f"{hook_name} was not called after auto_hook was applied"
     assert hook_name in model.hook_dict, f"{hook_name} is not in the hook_dict"
     print(f"TEST PASSED for {hook_name}")
-
 
 def test_manual_hook_point_decorator():
     '''Tests if the auto_hook decorator works with manual hook point'''

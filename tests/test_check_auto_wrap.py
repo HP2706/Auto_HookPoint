@@ -19,7 +19,7 @@ from typing import Any, Type, TypeVar, Dict
 T = TypeVar('T')
 
 #module instance, input 
-def get_test_cases():
+def get_cases():
     return [
         (SimpleModule, {}, {'x' : torch.randn(1, 10)}),
         (AutoEncoder, {'cfg' : {'d_mlp': 10, 'dict_mult': 1, 'l1_coeff': 1, 'seed': 1}}, {'x' : torch.randn(1, 10)}),
@@ -31,7 +31,7 @@ def get_test_cases():
 
 @pytest.mark.parametrize(
     "module, init_kwargs, input_kwargs", 
-    get_test_cases()
+    get_cases()
 )
 def test_check_auto_hook(
     module: Type[T], 

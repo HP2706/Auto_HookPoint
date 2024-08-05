@@ -144,6 +144,7 @@ with auto_hook you can train a SparseAutoEncoder on any huggingface transformers
 #most of the credit for this example goes to https://gist.github.com/joelburget
 #check https://github.com/HP2706/Auto_HookPoint/blob/main/examples/sae_lens.py for a complete example
 from Auto_HookPoint import HookedTransformerAdapter 
+#install via: pip install sae_lens
 from sae_lens import SAETrainingRunner, LanguageModelSAERunnerConfig
 
 cfg = LanguageModelSAERunnerConfig(
@@ -152,7 +153,7 @@ cfg = LanguageModelSAERunnerConfig(
     ...
 )
 
-hooked_model = HookedTransformerAdapter(model_name, Cfg(device="cuda", n_ctx=512))
+hooked_model = HookedTransformerAdapter(Cfg(device="cuda", n_ctx=512), hf_model_name= model_name)
 sparse_autoencoder = SAETrainingRunner(cfg, override_model=hooked_model).run()
 ```
 ### Note on SAE-Lens Integration:
