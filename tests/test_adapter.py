@@ -39,14 +39,14 @@ def preprocess_gpt2(model : HookedTransformer, input):
         tokens = input.to(model.model.device)
     emb =  model.hook_embed(model.embed(tokens))
     pos_emb = model.hook_pos_embed(model.pos_embed(tokens))
-    return emb + pos_emb
+    return tokens, emb + pos_emb
 
 def preprocess_mixtral(model : HookedTransformer, input):
     if isinstance(input, (str, list)):
         tokens = model.to_tokens(input).to(model.cfg.device)
     else:
         tokens = input.to(model.cfg.device)
-    return model.hook_embed(model.embed(tokens))
+    return tokens, model.hook_embed(model.embed(tokens))
 
 def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, HookedTransformerConfig]]:
     return [

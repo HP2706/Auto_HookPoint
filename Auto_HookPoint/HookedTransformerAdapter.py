@@ -160,6 +160,10 @@ class HookedTransformerAdapter(HookedTransformer):
         self.cfg = HookedTransformerConfig.unwrap(hooked_transformer_cfg)
         if isinstance(hf_model_name, str):
             self.model = auto_hook(AutoModelForCausalLM.from_pretrained(hf_model_name).to(hooked_transformer_cfg.device))
+            tokenizer = AutoTokenizer.from_pretrained(
+                hf_model_name,
+                trust_remote_code=self.cfg.trust_remote_code,
+            ) #type: ignore
         elif isinstance(model, nn.Module) and tokenizer is not None:
             self.model = auto_hook(model.to(hooked_transformer_cfg.device))
         else:
@@ -170,40 +174,7 @@ class HookedTransformerAdapter(HookedTransformer):
 
         if tokenizer is not None:
             self.set_tokenizer(tokenizer, default_padding_side=default_padding_side)
-        elif self.cfg.tokenizer_name is not None:
-            # If we have a tokenizer name, we can load it from HuggingFace
-            if self.cfg.tokenizer_name in NON_HF_HOSTED_MODEL_NAMES:
-                logging.warning(
-                    "%s tokenizer not loaded. Please load manually.",
-                    self.cfg.tokenizer_name,
-                )
-            else:
-                # Hugging Face defaults to use_fast to True
-                use_fast = True
-                # Phi model's fast tokenizer does not support adding a BOS token, use_fast
-                # should be False
-                if "phi" in self.cfg.tokenizer_name.lower():
-                    use_fast = False
-                huggingface_token = os.environ.get("HF_TOKEN", None)
-                self.set_tokenizer(
-                    AutoTokenizer.from_pretrained(
-                        self.cfg.tokenizer_name,
-                        add_bos_token=True,
-                        trust_remote_code=self.cfg.trust_remote_code,
-                        use_fast=use_fast,
-                        token=huggingface_token,
-                    ),
-                    default_padding_side=default_padding_side,
-                )
-        else:
-            # If no tokenizer name is provided, we assume we're training on an algorithmic task and
-            # will pass in tokens directly. In this case, we don't need a tokenizer.
-            assert self.cfg.d_vocab != -1, "Must provide a tokenizer if d_vocab is not provided"
-            self.tokenizer = None
-            if default_padding_side != "right":
-                logging.warning(
-                    "default_padding_side is explictly given but ignored because tokenizer is not set."
-                )
+                
 
         self.tokenizer.pad_token = self.tokenizer.eos_token #type: ignore 
         self.device = hooked_transformer_cfg.device
@@ -289,7 +260,7 @@ class HookedTransformerAdapter(HookedTransformer):
             if start_at_layer is None:
                 #THIS IS UGLY
                 if self.adapter_cfg.preprocess is not None:
-                    residual = self.adapter_cfg.preprocess(self, input)
+                    tokens, residual = self.adapter_cfg.preprocess(self, input)
                 else:
                     #residual = input
                     (

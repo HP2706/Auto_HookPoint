@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import os
 import sys
 from transformers import MixtralForCausalLM, MixtralModel
+from transformer_lens import HookedTransformer
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
@@ -30,7 +31,7 @@ model_name = "joelb/Mixtral-8x7B-1l"
 config = AutoConfig.from_pretrained(model_name)
 
 device = get_device()
-total_training_steps = 15_000  # probably we should do more
+total_training_steps = 15_00  # probably we should do more
 batch_size = 8
 total_training_tokens = total_training_steps * batch_size
 
@@ -91,19 +92,26 @@ cfg = LanguageModelSAERunnerConfig(
 
 torch.manual_seed(42)
 
+def preprocess_mixtral(model : HookedTransformer, input):
+    if isinstance(input, (str, list)):
+        tokens = model.to_tokens(input).to(model.cfg.device)
+    else:
+        tokens = input.to(model.cfg.device)
+    return tokens, model.hook_embed(model.embed(tokens))
 
 adapter_cfg = HookedTransformerAdapterCfg(
     mappings={
         'blocks': 'model.layers',
         'unembed': 'lm_head',
         'embed': 'model.embed_tokens',
-        'pos_embed' : 'model.rotary_emb',
+        'pos_embed' : None, #DUMMY
         'ln_final': 'model.norm',
     },
     inter_block_fn = lambda x : x[0],
-    create_kwargs = lambda cfg, residual: { 
+    create_kwargs = lambda cfg, residual: {
         'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
-    }
+    },
+    preprocess = preprocess_mixtral
 )
 
 hooked_transformer_cfg = HookedTransformerConfig_From_AutoConfig.from_auto_config(
