@@ -286,6 +286,20 @@ def test_hook_point_name(
     for name, hook_point in model.hook_dict.items():
         assert hook_point.name is not None, f"Hook point {name} has no name"
 
+@pytest.mark.parametrize("module, _ ", get_combined_cases())
+def test_auto_hook_module_naming(
+    module: T, 
+    _
+):
+    modules = [(name, module.__class__.__name__) for name, module in module.named_modules()]
+    hooked_model = auto_hook(module)
+    auto_modules = [(name, module.__class__.__name__) for name, module in hooked_model.named_modules() if not isinstance(module, HookPoint)]
+    assert len(modules) == len(auto_modules), f"Modules length do not match: {len(modules)} != {len(auto_modules)}"
+
+    for (name1, module_name1), (name2, module_name2) in zip(modules, auto_modules):
+        assert name1 == name2, f"Names do not match: {name1} != {name2}"
+        print(module_name1, module_name2)
+        assert module_name1 == module_name2, f"Modules class names do not match: {module_name1} != {module_name2}"
 
 def run_hook_test(model, hook_name, input_data):
     hook_called = {'value': False}

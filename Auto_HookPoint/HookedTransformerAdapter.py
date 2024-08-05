@@ -1,4 +1,5 @@
 import logging
+import warnings
 from transformer_lens.hook_points import HookedRootModule,  HookPoint
 from transformer_lens.components import PosEmbed, Unembed
 from transformer_lens.utilities import devices
@@ -52,7 +53,7 @@ class HookedTransformerAdapterCfg:
     Defines the mapping between the input model 
     and the HookedTransformer special attributes
     '''
-    mappings: dict[str, str] # map parameter attributes
+    mappings: dict[str, Optional[str]] # map parameter attributes
     inter_block_fn: Optional[Callable[[Any], Any]] = lambda x: x[0] 
     # often a block return (hidden_state, ..) we want to call the next block with the hidden_state only
     create_kwargs: Optional[Callable[[HookedTransformerConfig, Any], dict[str, Any]]] = None
@@ -156,7 +157,6 @@ class HookedTransformerAdapter(HookedTransformer):
 
         self.adapter_cfg = adapter_cfg
         self.cfg = HookedTransformerConfig.unwrap(hooked_transformer_cfg)
-
         if isinstance(hf_model_name, str):
             self.model = auto_hook(AutoModelForCausalLM.from_pretrained(hf_model_name).to(hooked_transformer_cfg.device))
         elif isinstance(model, nn.Module) and tokenizer is not None:
@@ -225,23 +225,25 @@ class HookedTransformerAdapter(HookedTransformer):
         self.hook_dict = update_dict(self.hook_dict)
         self.mod_dict = update_dict(self.mod_dict)
 
-        for d in [self.hook_dict, self.mod_dict]:
-            for k, v in d.items():
-                if isinstance(v, HookPoint):
-                    v.name = k
-
     def apply_mappings(self):
         for ht_attr, model_attr in self.adapter_cfg.mappings.items():
+            if model_attr is None:
+                logging.warning(f"No model attribute given for {ht_attr}, this might lead to errors")
+                continue
             value = self._get_attr_recursively(self.model, model_attr)
             if ht_attr == 'blocks':
-                self.blocks = self._wrap_blocks(value)
+                self.blocks = self.check_blocks(value)
             elif ht_attr == 'unembed':
                 self.unembed = AdaptedUnembed.from_regular_unembed(value, self.cfg)
             elif ht_attr == 'embed':
                 self.embed = value
                 self.hook_embed = HookPoint()
             elif ht_attr == 'pos_embed':
-                self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(value, self.cfg)
+                if isinstance(value, nn.Embedding):
+                    self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(value, self.cfg)
+                else:
+                    print("value", value)
+                    self.pos_embed = value
                 self.hook_pos_embed = HookPoint()
             elif ht_attr == 'ln_final':
                 self.ln_final = value
@@ -341,6 +343,21 @@ class HookedTransformerAdapter(HookedTransformer):
                     else:
                         logging.warning(f"Invalid return_type passed in: {return_type}")
                         return None
+                    
+    def run_with_cache(self, *args, **kwargs):
+        '''
+        A wrapper around HookedTransformer.run_with_cache()
+        '''
+        names_filter = kwargs.get('names_filter', None)
+        if names_filter is None:
+            raise ValueError("names_filter must be has currently not all hook inputs can be saved")
+        
+        if isinstance(names_filter, str) and names_filter not in self.hook_dict.keys():
+            #we do not allows names that are not in the hook_dict
+            # if names_filter is a function we trust the user to provide a valid function
+            raise ValueError(f"names_filter must be a key in hook_dict, got {names_filter}")
+
+        return super().run_with_cache(*args, **kwargs)
 
     def validate_args(
         self, 
@@ -351,9 +368,10 @@ class HookedTransformerAdapter(HookedTransformer):
         if (hf_model_name is not None) == (model is not None or tokenizer is not None):
             raise ValueError("Provide either a model name or both model and tokenizer objects, not both or neither.")
 
-    def _wrap_blocks(self, blocks):
+    def check_blocks(self, blocks):
         assert isinstance(blocks, Iterable) and isinstance(blocks, Sized), \
             f"Expected an iterable of modules with __len__, got {type(blocks)}"
+        assert len(blocks) == self.cfg.n_layers, f"Expected {self.cfg.n_layers} blocks, got {len(blocks)}"
         return list(blocks)
 
     def _get_attr_recursively(self, obj, attr : str) -> Any:

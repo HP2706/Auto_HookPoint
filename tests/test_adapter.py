@@ -55,7 +55,7 @@ def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, Hoo
                     'blocks': 'model.layers',
                     'unembed': 'lm_head',
                     'embed': 'model.embed_tokens',
-                    'pos_embed' : 'model.embed_tokens',
+                    'pos_embed' : 'model.rotary_emb',
                     'ln_final': 'model.norm',
                 },
                 inter_block_fn = lambda x: x[0],
@@ -78,7 +78,7 @@ def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, Hoo
                     'blocks': 'model.layers',
                     'unembed': 'lm_head',
                     'embed': 'model.embed_tokens',
-                    'pos_embed' : 'model.embed_tokens', #DUMMY
+                    'pos_embed' : None, #DUMMY
                     'ln_final': 'model.norm',
                 },
                 inter_block_fn = lambda x : x[0],
