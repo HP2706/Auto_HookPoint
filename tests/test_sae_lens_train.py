@@ -14,11 +14,13 @@ from tests.test_adapter import get_test_cases, TestCase
 from Auto_HookPoint.utils import get_device
 from Auto_HookPoint.HookedTransformerAdapter import HookedTransformerAdapter, HookedTransformerAdapterCfg
 
+
 @pytest.mark.parametrize("test_case", get_test_cases())
-def test_forward(
+def test_train(
     test_case : TestCase
 ):
     model_name, model, map_cfg, hooked_transformer_cfg, hook_name, layer = test_case
+    print(f"training sae lens on {model_name} with hook {hook_name} at layer {layer}")
     device = get_device()
     model = HookedTransformerAdapter(
         adapter_cfg=map_cfg,
@@ -26,7 +28,6 @@ def test_forward(
         tokenizer=gpt2_tokenizer,
         hooked_transformer_cfg=hooked_transformer_cfg
     )
-    print("model.hook_dict", model.hook_dict)
     cfg = LanguageModelSAERunnerConfig(
         model_name=model_name,
         hook_name=hook_name,

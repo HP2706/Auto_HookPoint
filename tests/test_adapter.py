@@ -1,4 +1,5 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaForCausalLM, MixtralForCausalLM, GPT2Config, GPT2LMHeadModel
+from transformer_lens import HookedTransformer
 from typing import List, NamedTuple
 import torch
 import torch.nn as nn
@@ -26,6 +27,27 @@ small_gpt2_config = GPT2Config(
     vocab_size=50257,
 )
 
+def create_kwargs_llama(model, residual):
+    position_ids = torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
+    position_embeddings = model.model.model.rotary_emb(residual, position_ids)
+    return {'position_ids': position_ids, 'position_embeddings': position_embeddings}
+
+def preprocess_gpt2(model : HookedTransformer, input):
+    if isinstance(input, (str, list)):
+        tokens = model.to_tokens(input).to(model.model.device)
+    else:
+        tokens = input.to(model.model.device)
+    emb =  model.hook_embed(model.embed(tokens))
+    pos_emb = model.hook_pos_embed(model.pos_embed(tokens))
+    return emb + pos_emb
+
+def preprocess_mixtral(model : HookedTransformer, input):
+    if isinstance(input, (str, list)):
+        tokens = model.to_tokens(input).to(model.cfg.device)
+    else:
+        tokens = input.to(model.cfg.device)
+    return model.hook_embed(model.embed(tokens))
+
 def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, HookedTransformerConfig]]:
     return [
         (
@@ -39,7 +61,8 @@ def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, Hoo
                     'pos_embed': 'transformer.wpe',
                     'ln_final': 'transformer.ln_f',
                 },
-                inter_block_fn = lambda x: x[0]
+                inter_block_fn = lambda x: x[0],
+                preprocess = preprocess_gpt2
             ),
             HookedTransformerConfig_From_AutoConfig.from_auto_config(
                 small_gpt2_config, 
@@ -59,9 +82,8 @@ def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, Hoo
                     'ln_final': 'model.norm',
                 },
                 inter_block_fn = lambda x: x[0],
-                create_kwargs = lambda cfg, residual: {
-                    'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
-                }
+                create_kwargs = create_kwargs_llama,
+                preprocess = None
             ), 
             HookedTransformerConfig_From_AutoConfig.from_auto_config(
                 small_llama_config, 
@@ -84,7 +106,8 @@ def get_hf_cases()-> list[tuple[str, nn.Module, HookedTransformerAdapterCfg, Hoo
                 inter_block_fn = lambda x : x[0],
                 create_kwargs = lambda cfg, residual: {
                     'position_ids': torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
-                }
+                },
+                preprocess = preprocess_mixtral
             ),
             HookedTransformerConfig_From_AutoConfig.from_auto_config(
                 small_mixtral_config, 
@@ -106,15 +129,24 @@ class TestCase(NamedTuple):
 def get_test_cases() -> List[TestCase]:
     base_cases = get_hf_cases()
     hook_names_and_layers = [
-        ("model.transformer.h.1.mlp.c_fc.hook_point", 1),
-        ("model.layers.0.mlp.hook_point", 0),
-        ("model.layers.0.input_layernorm.hook_point", 0)
+        ("model.transformer.h.1.mlp.c_fc.hook_point", 2),
+        ("model.layers.0.mlp.hook_point", 1),
+        ("model.layers.0.input_layernorm.hook_point", 1)
     ]
     
     return [
         TestCase(*case, hook_name, layer)
         for case, (hook_name, layer) in zip(base_cases, hook_names_and_layers)
     ]
+
+def create_attention_mask(name, hooked_transformer_cfg):
+    n_ctx = hooked_transformer_cfg.n_ctx
+    device = hooked_transformer_cfg.device
+    if name == "mistralai/Mixtral-8x7B-Instruct-v0.1":
+        attention_mask = torch.tril(torch.ones((1, 1, n_ctx, n_ctx))).to(device)
+    else:
+        attention_mask=torch.tril(torch.ones(n_ctx, n_ctx)).to(device)
+    return attention_mask
 
 @pytest.mark.parametrize("test_case", get_test_cases())
 def test_with_cache(test_case: TestCase):
@@ -129,11 +161,13 @@ def test_with_cache(test_case: TestCase):
     )
     if hook_name not in adapter_model.hook_dict.keys():
         raise ValueError(f"Hook {hook_name} not found in model {model_name}")
+    
+    attention_mask = create_attention_mask(model_name, hooked_transformer_cfg)
     adapter_model.run_with_cache(
-        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)), 
+        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)).to(hooked_transformer_cfg.device), 
         names_filter=hook_name,
         stop_at_layer=layer,
-        attention_mask=torch.tril(torch.ones(hooked_transformer_cfg.n_ctx, hooked_transformer_cfg.n_ctx)),
+        attention_mask=attention_mask,
         return_type='logits'
     )
 
@@ -149,9 +183,10 @@ def test_forward(test_case: TestCase):
         hooked_transformer_cfg=hooked_transformer_cfg
     )
 
+    attention_mask = create_attention_mask(model_name, hooked_transformer_cfg)
     adapter_model.forward(
-        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)), 
-        attention_mask=torch.tril(torch.ones(hooked_transformer_cfg.n_ctx, hooked_transformer_cfg.n_ctx)),
+        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)).to(hooked_transformer_cfg.device), 
+        attention_mask=attention_mask,
         stop_at_layer=layer,
         return_type='logits'
     )

@@ -57,6 +57,7 @@ class HookedTransformerAdapterCfg:
     inter_block_fn: Optional[Callable[[Any], Any]] = lambda x: x[0] 
     # often a block return (hidden_state, ..) we want to call the next block with the hidden_state only
     create_kwargs: Optional[Callable[[HookedTransformerConfig, Any], dict[str, Any]]] = None
+    preprocess: Optional[Callable[[Any], torch.Tensor]] = None
     # additional kwargs to pass to the model
 
 class AdaptedPosEmbed(PosEmbed):
@@ -219,11 +220,16 @@ class HookedTransformerAdapter(HookedTransformer):
     def setup(self):
         super().setup()
 
-        def update_dict(d):
-            return {k.replace("model.model", "model"): v for k, v in d.items()}
-
-        self.hook_dict = update_dict(self.hook_dict)
-        self.mod_dict = update_dict(self.mod_dict)
+        #we do some renaming of model.model. to model.
+        for dict_name in ['hook_dict', 'mod_dict']:
+            original_dict = getattr(self, dict_name)
+            new_dict = {}
+            for k, v in original_dict.items():
+                new_key = k.replace("model.model.", "model.")
+                if isinstance(v, HookPoint):
+                    v.name = new_key
+                new_dict[new_key] = v
+            setattr(self, dict_name, new_dict)
 
     def apply_mappings(self):
         for ht_attr, model_attr in self.adapter_cfg.mappings.items():
@@ -239,6 +245,7 @@ class HookedTransformerAdapter(HookedTransformer):
                 self.embed = value
                 self.hook_embed = HookPoint()
             elif ht_attr == 'pos_embed':
+                print("value", value)
                 if isinstance(value, nn.Embedding):
                     self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(value, self.cfg)
                 else:
@@ -278,18 +285,24 @@ class HookedTransformerAdapter(HookedTransformer):
         with utils.LocallyOverridenDefaults(
             self, prepend_bos=prepend_bos, padding_side=padding_side
         ):
+            #NOTE this is in place of input_to_embed()!!
             if start_at_layer is None:
-                (
-                    residual,
-                    tokens,
-                    shortformer_pos_embed,
-                    attention_mask,
-                ) = self.input_to_embed(
-                    input,
-                    prepend_bos=prepend_bos,
-                    padding_side=padding_side,
-                    past_kv_cache=None, #we do no allow kv_cache
-                )
+                #THIS IS UGLY
+                if self.adapter_cfg.preprocess is not None:
+                    residual = self.adapter_cfg.preprocess(self, input)
+                else:
+                    #residual = input
+                    (
+                        residual,
+                        tokens,
+                        shortformer_pos_embed,
+                        attention_mask,
+                    ) = self.input_to_embed(
+                        input,
+                        prepend_bos=prepend_bos,
+                        padding_side=padding_side,
+                        past_kv_cache=past_kv_cache,
+                    )
             else:
                 assert type(input) == torch.Tensor
                 residual = input
@@ -297,11 +310,13 @@ class HookedTransformerAdapter(HookedTransformer):
                 start_at_layer = 0
 
             if self.adapter_cfg.create_kwargs is not None:
-                kwargs = self.adapter_cfg.create_kwargs(self.cfg, residual)
+                kwargs = self.adapter_cfg.create_kwargs(self, residual)
             else: 
                 kwargs = {}
-                
+
             blocks_and_idxs = list(zip(range(self.cfg.n_layers), self.blocks))
+            
+            assert len(blocks_and_idxs[start_at_layer:stop_at_layer]) > 0, f"start_at_layer and stop_at_layer must be valid got start_at_layer={start_at_layer} and stop_at_layer={stop_at_layer}"
             for i, block in blocks_and_idxs[start_at_layer:stop_at_layer]:  # type: ignore
                 residual = block(
                     residual,
@@ -350,7 +365,7 @@ class HookedTransformerAdapter(HookedTransformer):
         '''
         names_filter = kwargs.get('names_filter', None)
         if names_filter is None:
-            raise ValueError("names_filter must be has currently not all hook inputs can be saved")
+            raise ValueError("names_filter cannot be None as not all hooks will work")
         
         if isinstance(names_filter, str) and names_filter not in self.hook_dict.keys():
             #we do not allows names that are not in the hook_dict
