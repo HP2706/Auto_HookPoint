@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch
 import pytest
 from functools import partial
-from .test_models import get_combined_cases, get_base_cases, get_hf_cases, hooked_transformer_cfg
+from .test_models import get_combined_cases, get_base_cases
 #for testing 
 
 T = TypeVar('T', bound=nn.Module)
@@ -28,34 +28,57 @@ def check_hook_types(
 ):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
+def generic_check_hook_fn_bwd_works(model: T, input: Dict[str, torch.Tensor]):
+    counter = {'value': 0, 'hooks': []}
+    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
+        counter['value'] += 1
+        counter['hooks'].append(hook_name)
+        if isinstance(grad_output, tuple):
+            if any(g is not None and g.requires_grad for g in grad_output):
+                return grad_output
+        elif grad_output is not None and grad_output.requires_grad:
+            return (grad_output,)
+    
+    generic_hook_check(model, input, backward_hook, is_backward=True, counter=counter)
+    return counter  # Return the counter for assertion in the test function
+
+def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
+    counter = {'value': 0, 'hooks': []}
+    def hook_wrapper(x, hook=None, hook_name=None):
+        counter['value'] += 1
+        counter['hooks'].append(hook_name)
+        return x
+    generic_hook_check(model, input, hook_wrapper, is_backward=False, counter=counter)
+    return counter  # Return the counter for assertion in the test function
+
 def generic_hook_check(
     model: T,
     input: Dict[str, torch.Tensor],
     hook_fn,
-    is_backward: bool
+    is_backward: bool,
+    counter: Dict[str, Any]
 ):
-    counter = {'value': 0, 'hooks': []}
-
-    hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
-    hooks = [(name, partial(hook_fn, hook_name=name)) for name in hook_names]
+    hooks = [(name, partial(hook_fn, hook_name=name)) for (name, _) in model.hook_dict.items()]
     
     if is_backward:
         output = model.run_with_hooks(**input, bwd_hooks=hooks)
         loss = get_loss(output)
         loss.backward()
     else:
-        model.run_with_hooks(**input, fwd_hooks=hooks)
-
-    unused_hooks = set(hook_names) - set(counter['hooks'])
+        output = model.run_with_hooks(**input, fwd_hooks=hooks)
+    
     hooks_multiple_times = list(set([hook for hook in counter['hooks'] if counter['hooks'].count(hook) > 1]))
     
+    hook_names = [hook_name for hook_name, _ in hooks]
     assert (
-        counter['value'] == len(hook_names) or len(hooks_multiple_times) > 0 or len(unused_hooks) > 0
+        counter['value'] == len(hooks)
     ), (
-        f"counter['value'] == len(hook_names) and len(hooks_multiple_times) == 0, "
-        f"{counter['value']} == {len(hook_names)}, "
-        f"{hook_names} unused: {unused_hooks} "
-        f"hooks called multiple times: {hooks_multiple_times}"
+        f"counter['value'] = {counter['value']}",
+        f"len(hooks) = {len(hooks)}",
+        f"{counter['value']} == {len(hook_names)}",
+        f"hooks called multiple times: {hooks_multiple_times}",
+        f"hooks not called: {set(hook_names) - set(counter['hooks'])}",
+        f"hooks called: {set(counter['hooks'])}"
     )
     print("TEST PASSED")
 
@@ -71,26 +94,6 @@ def get_loss(output):
         raise ValueError("No suitable tensor found for backward pass")
 
 
-def generic_check_hook_fn_bwd_works(model: T, input: Dict[str, torch.Tensor]):
-    counter = {'value': 0, 'hooks': []}
-    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        if isinstance(grad_output, tuple):
-            if any(g is not None and g.requires_grad for g in grad_output):
-                return grad_output
-        elif grad_output is not None and grad_output.requires_grad:
-            return (grad_output,)
-    
-    generic_hook_check(model, input, backward_hook, is_backward=True)
-
-def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
-    counter = {'value': 0, 'hooks': []}
-    def hook_wrapper(x, hook=None, hook_name=None):
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        return x
-    generic_hook_check(model, input, hook_wrapper, is_backward=False)
 
 def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)

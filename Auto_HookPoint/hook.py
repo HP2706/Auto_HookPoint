@@ -19,7 +19,7 @@ from Auto_HookPoint.utils import process_container_module
 
 #these are modules where we will not iterate over their parameters
 BUILT_IN_MODULES = [
-    nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d,
+    nn.Linear, nn.Embedding, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d,
     nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.LayerNorm , nn.LayerNorm,
     nn.RNN, nn.LSTM, nn.GRU, nn.RNNCell, nn.LSTMCell, nn.GRUCell, 
     # Add more built-in module types as needed
@@ -210,8 +210,9 @@ class HookedModule(HookedRootModule, Generic[T]):
     '''
     
     _modules: dict[str, nn.Module]
+    _parameters: dict[str, nn.Parameter]
     
-    def __init__(self, module: T):
+    def __init__(self, module: T, wrap_submodules: bool = True):
         '''
         Initialize the HookedModule.
         
@@ -224,7 +225,8 @@ class HookedModule(HookedRootModule, Generic[T]):
         self.__dict__['_parameters'] = module._parameters
         self.hook_point = HookPoint()
         self._create_forward()
-        self._wrap_submodules()
+        if wrap_submodules:
+            self._wrap_submodules()
         self.setup()
         # Preserve the original class name
         class_name = module.__class__.__name__
@@ -260,6 +262,7 @@ class HookedModule(HookedRootModule, Generic[T]):
         if not any(isinstance(self._module, built_in_module) for built_in_module in BUILT_IN_MODULES):
             for name, submodule in self._module.named_parameters(recurse=False):
                 if isinstance(submodule, (nn.Parameter, torch.Tensor)):
+                    submodule = cast(nn.Parameter, submodule)
                     setattr(self._module, name, auto_hook(submodule))
                 else:
                     raise ValueError(f"Submodule {name} is not a nn.Parameter or torch.Tensor")
@@ -276,7 +279,7 @@ class HookedModule(HookedRootModule, Generic[T]):
             elif any(isinstance(submodule, built_in_module) for built_in_module in BUILT_IN_MODULES):
                 # For built-in modules, add a hook_point without wrapping
                 submodule.hook_point = HookPoint()
-                setattr(self._module, name, submodule)
+                setattr(self._module, name, HookedModule(submodule, wrap_submodules=False))
             else:
                 setattr(self._module, name, auto_hook(submodule))
 
