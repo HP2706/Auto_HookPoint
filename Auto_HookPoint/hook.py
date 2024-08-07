@@ -204,123 +204,22 @@ class HookedParameter(nn.Parameter, Generic[P]):
         '''
         return cast(P, nn.Parameter(self.data, requires_grad=self.requires_grad))
 
+#heavily aspired by this very clean approach. https://github.com/jbloomAus/SAELens/blob/33de7f1abe10de183ffe3ea17b51dbcb991daf37/sae_lens/load_model.py#L76
 class HookedModule(HookedRootModule, Generic[T]):
-    '''
-    A wrapper for nn.Module that adds hook points and wraps submodules.
-    '''
-    
-    _modules: dict[str, nn.Module]
-    _parameters: dict[str, nn.Parameter]
-    
-    def __init__(self, module: T, wrap_submodules: bool = True):
-        '''
-        Initialize the HookedModule.
-        
-        Args:
-            module (T): The nn.module to be wrapped.
-        '''
+    def __init__(self, model: T):
         super().__init__()
-        self.__dict__['_module'] = module #NOTE avoid __getattr__
-        self.__dict__['_modules'] = module._modules  
-        self.__dict__['_parameters'] = module._parameters
-        self.hook_point = HookPoint()
-        self._create_forward()
-        if wrap_submodules:
-            self._wrap_submodules()
+        self.model = model
         self.setup()
-        # Preserve the original class name
-        class_name = module.__class__.__name__
-        #hacky way to preserve the original class name
-        self.__class__ = type(class_name, (HookedModule,), {'__module__': self.__class__.__module__})
 
-    def __getattr__(self, name: str) -> Any:
-        '''
-        Delegate attribute access to the wrapped module if the attribute
-        is not found in the HookedModule.
-        '''
-        if name in self.__dict__:
-            return self.__dict__[name]
-        if name in self._modules:
-            return self._modules[name]
-        if '_module' in self.__dict__:
-            return getattr(self.__dict__['_module'], name)
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-    
-    def setup(self):
-        '''
-        Set up the module and hook dictionaries.
-        '''
-        self.mod_dict = {'hook_point': self.hook_point}
-        self.hook_dict = {'hook_point': self.hook_point}
-        self._populate_dicts(self._module)
-
-    def _wrap_submodules(self):
-        '''
-        Recursively wrap submodules with hooks.
-        '''
-        #wrap parameters if the module is not a built-in module like for instance nn.Linear
-        if not any(isinstance(self._module, built_in_module) for built_in_module in BUILT_IN_MODULES):
-            for name, submodule in self._module.named_parameters(recurse=False):
-                if isinstance(submodule, (nn.Parameter, torch.Tensor)):
-                    submodule = cast(nn.Parameter, submodule)
-                    setattr(self._module, name, auto_hook(submodule))
-                else:
-                    raise ValueError(f"Submodule {name} is not a nn.Parameter or torch.Tensor")
-
-        for name, submodule in self._module.named_children():
-            if isinstance(submodule, HookPoint):
-                continue
-            elif isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
-                hooked_container = process_container_module(
-                    submodule,
-                    lambda m: auto_hook(m)
-                )
-                setattr(self._module, name, hooked_container)
-            elif any(isinstance(submodule, built_in_module) for built_in_module in BUILT_IN_MODULES):
-                # For built-in modules, add a hook_point without wrapping
-                submodule.hook_point = HookPoint()
-                setattr(self._module, name, HookedModule(submodule, wrap_submodules=False))
-            else:
-                setattr(self._module, name, auto_hook(submodule))
-
-    def _populate_dicts(self, module: nn.Module, prefix=''):
-        '''
-        Recursively populate the module and hook dictionaries.
-        
-        Args:
-            module (nn.Module): The module to populate from.
-            prefix (str): The prefix for the current module's name.
-        '''
-        for name, child in module.named_children():
-            full_name = f"{prefix}.{name}" if prefix else name
-            # Remove '._module' from the full_name
-            full_name = full_name.replace('._module', '')
-            self.mod_dict[full_name] = child
-            
-            if isinstance(child, HookedModule):
-                hook_point_name = f"{full_name}.hook_point"
-                self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = child.hook_point
-                self._populate_dicts(child._module, full_name)
-            elif isinstance(child, HookPoint):
-                self.hook_dict[full_name] = child
-            else:
-                self._populate_dicts(child, full_name)
-        
+    def wrap_module_params(self, module: nn.Module):
         for name, param in module.named_parameters(recurse=False):
-            if isinstance(param, HookedParameter):
-                full_name = f"{prefix}.{name}" if prefix else name
-                # Remove '._module' from the full_name
-                full_name = full_name.replace('._module', '')
-                self.mod_dict[full_name] = param
-                hook_point_name = f'{full_name}.hook_point'
-                self.mod_dict[hook_point_name] = self.hook_dict[hook_point_name] = param.hook_point
-
-        #name the hook_points
-
-        for d in [self.mod_dict.items(), self.hook_dict.items()]:
-            for k, v in d:
-                if isinstance(v, HookPoint):
-                    v.name = k
+            param = cast(nn.Parameter, param)
+            hooked_param = cast(HookedParameter, HookedParameter(param))
+            module._parameters[name] = hooked_param
+            hooked_param.hook_point.name = name
+            hook = hooked_param.hook_point
+            self.hook_dict[name] = hook
+            self.mod_dict[name] = hook
 
     def unwrap(self) -> T:
         '''
@@ -329,42 +228,57 @@ class HookedModule(HookedRootModule, Generic[T]):
         Returns:
             T: The original, unwrapped module.
         '''
-        for name, submodule in list(self._module.named_children()):
+        for name, submodule in list(self.model.named_children()):
             if isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
                 unhooked_container = process_container_module(
                     submodule,
                     lambda m: m.unwrap() if isinstance(m, HookedModule) else m
                 )
-                setattr(self._module, name, unhooked_container)
-                self._module._modules[name] = unhooked_container
+                setattr(self.model, name, unhooked_container)
+                self.model._modules[name] = unhooked_container
             elif isinstance(submodule, (HookedModule, HookedParameter)):
                 unwrapped_submodule = submodule.unwrap()
-                setattr(self._module, name, unwrapped_submodule)
-                self._module._modules[name] = unwrapped_submodule
+                setattr(self.model, name, unwrapped_submodule)
+                self.model._modules[name] = unwrapped_submodule
             elif hasattr(submodule, 'hook_point'):
                 # Remove hook_point from built-in modules
                 delattr(submodule, 'hook_point')
-
         # Remove HookPoint instances from _modules
-        self._module._modules = {k: v for k, v in self._module._modules.items() if not isinstance(v, HookPoint)}
+        self.model._modules = {k: v for k, v in self.model._modules.items() if not isinstance(v, HookPoint)}
 
         # Remove HookPoint instances from the module itself
-        for name in list(self._module.__dict__.keys()):
-            if isinstance(getattr(self._module, name), HookPoint):
-                delattr(self._module, name)
+        for name in list(self.model.__dict__.keys()):
+            if isinstance(getattr(self.model, name), HookPoint):
+                delattr(self.model, name)
 
-        return self._module
+        return self.model
 
-    def _create_forward(self):
-        '''
-        Create a new forward method that calls self.hook_point on the output of original forward method
-        '''
-        original_forward = self._module.forward
-        original_type_hints = get_type_hints(original_forward) # move typehints
+    def setup(self):
+        self.mod_dict = {}
+        self.hook_dict: dict[str, HookPoint] = {}
+        for name, module in self.named_modules():
+            if name == "":
+                continue
+            
+            hook_point = HookPoint()
+            hook_point.name = name  # type: ignore
+            module.register_forward_hook(get_hook_fn(hook_point))
+            module.register_backward_hook(get_hook_fn(hook_point))
+            self.hook_dict[name] = hook_point
+            self.mod_dict[name] = hook_point
+            if not any(isinstance(module, built_in_module) for built_in_module in BUILT_IN_MODULES):
+                self.wrap_module_params(module) # if not a built-in module, wrap its parameters
 
-        @functools.wraps(original_forward)
-        def new_forward(*args: Any, **kwargs: Any) -> Any:
-            return self.hook_point(original_forward(*args, **kwargs))
-
-        new_forward.__annotations__ = original_type_hints
-        self.forward = new_forward
+    def forward(self, *args: Any, **kwargs: Any):
+        return self.model(*args, **kwargs)
+    
+def get_hook_fn(hook_point: HookPoint):
+    def hook_fn(module: Any, input: Any, output: Any) -> Any:
+        if isinstance(output, torch.Tensor):
+            return hook_point(output)
+        elif isinstance(output, tuple) and isinstance(output[0], torch.Tensor):
+            return (hook_point(output[0]), *output[1:])
+        else:
+            # if this isn't a tensor, just skip the hook entirely as this will break otherwise
+            return output
+    return hook_fn
