@@ -15,7 +15,7 @@ def generate_expected_hookpoints(model : Union[HookedModule, nn.Module],  prefix
     expected_hooks = set()
     expected_hooks.add('hook_point')
     if isinstance(model, HookedModule):
-        model = model._module
+        model = model.model
 
     for name, module in model.named_children():
         full_name = f"{prefix}.{name}" if prefix else name

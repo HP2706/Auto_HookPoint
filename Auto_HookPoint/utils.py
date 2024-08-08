@@ -3,6 +3,7 @@ from torch import nn
 from typing import Iterable, Tuple
 import torch
 
+
 def get_device():
     if torch.cuda.is_available():
         return "cuda"

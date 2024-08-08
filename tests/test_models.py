@@ -112,9 +112,6 @@ class SimpleModule(nn.Module):
     def __init__(self):
         super().__init__()
         self.inner1 = nn.Linear(10, 10)
-    
-    def get_forward_shape(self):
-        return torch.Size([1, 10])
 
     def forward(self, x):
         return self.inner1(x)

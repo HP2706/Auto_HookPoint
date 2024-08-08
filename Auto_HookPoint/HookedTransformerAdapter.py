@@ -2,11 +2,9 @@ import logging
 import warnings
 from transformer_lens.hook_points import HookedRootModule,  HookPoint
 from transformer_lens.components import PosEmbed, Unembed
-from transformer_lens.utilities import devices
 from transformer_lens.HookedTransformer import (
     HookedTransformer, 
     HookedTransformerKeyValueCache,
-    NON_HF_HOSTED_MODEL_NAMES,
     Output,
     Loss,
     USE_DEFAULT_VALUE
@@ -189,24 +187,18 @@ class HookedTransformerAdapter(HookedTransformer):
             self.to(self.device)
 
     def setup(self):
-        super().setup()
+        self.hook_dict = self.model.hook_dict
+        self.mod_dict = self.model.mod_dict
 
-        #we do some renaming of model.model. to model.
-        for dict_name in ['hook_dict', 'mod_dict']:
-            original_dict = getattr(self, dict_name)
-            new_dict = {}
-            for k, v in original_dict.items():
-                new_key = k.replace("model.model.", "model.")
-                if isinstance(v, HookPoint):
-                    v.name = new_key
-                new_dict[new_key] = v
-            setattr(self, dict_name, new_dict)
 
     def apply_mappings(self):
         for ht_attr, model_attr in self.adapter_cfg.mappings.items():
             if model_attr is None:
                 logging.warning(f"No model attribute given for {ht_attr}, this might lead to errors")
                 continue
+                
+            model_attr = 'model.' + model_attr
+                
             value = self._get_attr_recursively(self.model, model_attr)
             if ht_attr == 'blocks':
                 self.blocks = self.check_blocks(value)
@@ -216,11 +208,9 @@ class HookedTransformerAdapter(HookedTransformer):
                 self.embed = value
                 self.hook_embed = HookPoint()
             elif ht_attr == 'pos_embed':
-                print("value", value)
                 if isinstance(value, nn.Embedding):
                     self.pos_embed = AdaptedPosEmbed.from_regular_pos_embed(value, self.cfg)
                 else:
-                    print("value", value)
                     self.pos_embed = value
                 self.hook_pos_embed = HookPoint()
             elif ht_attr == 'ln_final':
@@ -272,7 +262,7 @@ class HookedTransformerAdapter(HookedTransformer):
                         input,
                         prepend_bos=prepend_bos,
                         padding_side=padding_side,
-                        past_kv_cache=past_kv_cache,
+                        past_kv_cache=None,
                     )
             else:
                 assert type(input) == torch.Tensor

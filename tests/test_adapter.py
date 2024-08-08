@@ -29,7 +29,7 @@ small_gpt2_config = GPT2Config(
 
 def create_kwargs_llama(model, residual):
     position_ids = torch.arange(residual.shape[1], device=residual.device).expand(residual.shape[0], -1)
-    position_embeddings = model.model.model.rotary_emb(residual, position_ids)
+    position_embeddings = model.model.model.model.rotary_emb(residual, position_ids)
     return {'position_ids': position_ids, 'position_embeddings': position_embeddings}
 
 def preprocess_gpt2(model : HookedTransformer, input):
@@ -122,14 +122,14 @@ class TestCase(NamedTuple):
     model_name: str
     model: nn.Module
     map_cfg: HookedTransformerAdapterCfg
-    hooked_transformer_cfg: HookedTransformerConfig
+    hooked_cfg: HookedTransformerConfig
     hook_name: str
     layer: int
 
 def get_test_cases() -> List[TestCase]:
     base_cases = get_hf_cases()
     hook_names_and_layers = [
-        ("model.transformer.h.1.mlp.c_fc.hook_point", 2),
+        ("transformer.h.1.mlp.c_fc.hook_point", 2),
         ("model.layers.0.mlp.hook_point", 1),
         ("model.layers.0.input_layernorm.hook_point", 1)
     ]
@@ -139,9 +139,9 @@ def get_test_cases() -> List[TestCase]:
         for case, (hook_name, layer) in zip(base_cases, hook_names_and_layers)
     ]
 
-def create_attention_mask(name, hooked_transformer_cfg):
-    n_ctx = hooked_transformer_cfg.n_ctx
-    device = hooked_transformer_cfg.device
+def create_attention_mask(name, hooked_cfg):
+    n_ctx = hooked_cfg.n_ctx
+    device = hooked_cfg.device
     if name == "mistralai/Mixtral-8x7B-Instruct-v0.1":
         attention_mask = torch.tril(torch.ones((1, 1, n_ctx, n_ctx))).to(device)
     else:
@@ -150,21 +150,22 @@ def create_attention_mask(name, hooked_transformer_cfg):
 
 @pytest.mark.parametrize("test_case", get_test_cases())
 def test_with_cache(test_case: TestCase):
-    model_name, model, map_cfg, hooked_transformer_cfg, hook_name, layer = test_case
+    model_name, model, map_cfg, hooked_cfg, hook_name, layer = test_case
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     adapter_model = HookedTransformerAdapter(
         adapter_cfg=map_cfg,
         model=model,
         tokenizer=tokenizer,
-        hooked_transformer_cfg=hooked_transformer_cfg
+        hooked_transformer_cfg=hooked_cfg
     )
+          
     if hook_name not in adapter_model.hook_dict.keys():
-        raise ValueError(f"Hook {hook_name} not found in model {model_name}")
+        raise ValueError(f"Hook {hook_name} not found in model {model_name}, hook_dict: {adapter_model.hook_dict.keys()}")
     
-    attention_mask = create_attention_mask(model_name, hooked_transformer_cfg)
+    attention_mask = create_attention_mask(model_name, hooked_cfg)
     adapter_model.run_with_cache(
-        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)).to(hooked_transformer_cfg.device), 
+        torch.randint(1, hooked_cfg.d_vocab, (1, hooked_cfg.n_ctx)).to(hooked_cfg.device), 
         names_filter=hook_name,
         stop_at_layer=layer,
         attention_mask=attention_mask,
@@ -173,19 +174,20 @@ def test_with_cache(test_case: TestCase):
 
 @pytest.mark.parametrize("test_case", get_test_cases())
 def test_forward(test_case: TestCase):
-    model_name, model, map_cfg, hooked_transformer_cfg, hook_name, layer = test_case
+    model_name, model, map_cfg, hooked_cfg, hook_name, layer = test_case
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     adapter_model = HookedTransformerAdapter(
         adapter_cfg=map_cfg,
         model=model,
         tokenizer=tokenizer,
-        hooked_transformer_cfg=hooked_transformer_cfg
+        hooked_transformer_cfg=hooked_cfg
     )
 
-    attention_mask = create_attention_mask(model_name, hooked_transformer_cfg)
+    attention_mask = create_attention_mask(model_name, hooked_cfg)
+    device = hooked_cfg.device
     adapter_model.forward(
-        torch.randint(1, hooked_transformer_cfg.d_vocab, (1, hooked_transformer_cfg.n_ctx)).to(hooked_transformer_cfg.device), 
+        torch.randint(1, hooked_cfg.d_vocab, (1, hooked_cfg.n_ctx)).to(device), 
         attention_mask=attention_mask,
         stop_at_layer=layer,
         return_type='logits'
