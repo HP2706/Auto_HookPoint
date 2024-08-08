@@ -7,7 +7,6 @@ sys.path.insert(0, project_root)
 import copy
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Auto_HookPoint.hook import auto_hook
-from Auto_HookPoint.utils import slice_name
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer
 from transformers.utils.generic import ModelOutput
@@ -30,19 +29,6 @@ def check_hook_types(
 ):
     assert all(isinstance(t, HookPoint) for t in [tup[1] for tup in hook_list])
 
-def generic_check_hook_fn_bwd_works(model: T, input: Dict[str, torch.Tensor]):
-    counter = {'value': 0, 'hooks': []}
-    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
-        counter['value'] += 1
-        counter['hooks'].append(hook_name)
-        if isinstance(grad_output, tuple):
-            if any(g is not None and g.requires_grad for g in grad_output):
-                return grad_output
-        elif grad_output is not None and grad_output.requires_grad:
-            return (grad_output,)
-    
-    generic_hook_check(model, input, backward_hook, is_backward=True, counter=counter)
-    return counter  # Return the counter for assertion in the test function
 
 def generic_check_hook_fn_fwd_works(model: T, input: Dict[str, torch.Tensor]):
     counter = {'value': 0, 'hooks': []}
@@ -197,7 +183,6 @@ def test_unwrap_works(
     post_named_modules = [(name, type(module)) for name, module in unwrapped_model.named_modules()]
     assert pre_named_modules == post_named_modules, f"Expected {pre_named_modules}, got {post_named_modules}"
 
-
 @pytest.mark.parametrize("module, input", get_combined_cases())
 def test_to_works(
     module: T, 
@@ -221,7 +206,7 @@ def test_wrapping(
     model = auto_hook(model_pre)
 
     #remove "model."
-    post_named_parameters = [(slice_name(name), module) for (name, module) in model.named_parameters()]
+    post_named_parameters = [(name, module) for (name, module) in model.named_parameters()]
 
     incorrect_elms = []
     for pre_name, pre_param in pre_named_parameters:
@@ -241,7 +226,18 @@ def test_hook_fn_bwd_works(
     input : Dict[str, torch.Tensor]
 ):
     model = auto_hook(module)
-    generic_check_hook_fn_bwd_works(model, input)
+    counter = {'value': 0, 'hooks': []}
+    def backward_hook(grad_output, hook: Optional[HookPoint] = None, hook_name: str = '') -> Union[Any, None]:
+        counter['value'] += 1
+        counter['hooks'].append(hook_name)
+        if isinstance(grad_output, tuple):
+            if any(g is not None and g.requires_grad for g in grad_output):
+                return grad_output
+        elif grad_output is not None and grad_output.requires_grad:
+            return (grad_output,)
+    
+    generic_hook_check(model, input, backward_hook, is_backward=True, counter=counter)
+    return counter  # Return the counter for assertion in the test function
 
 @pytest.mark.parametrize("module, _", get_combined_cases())
 def test_check_all_hooks(
@@ -305,6 +301,7 @@ def run_hook_test(model, hook_name, input_data):
 
 def test_manual_hook_point_decorator():
     '''Tests if the auto_hook decorator works with manual hook point'''
+    
     @auto_hook
     class TestModel(nn.Module):
         def __init__(self):

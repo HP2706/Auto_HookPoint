@@ -1,5 +1,4 @@
 from __future__ import annotations
-from .utils import slice_name
 from inspect import isclass
 import warnings
 from torch import nn
@@ -218,19 +217,41 @@ class HookedModule(HookedRootModule, Generic[T]):
     def __init__(self, model: T):
         super().__init__()        
         self.model = model
+        self.__dict__['model'] = model #NOTE avoid __getattr__
+        self.__dict__['_modules'] = model._modules  
+        self.__dict__['_parameters'] = model._parameters
         self.setup()
         
+         # Preserve the original class name
+        class_name = model.__class__.__name__
+        #hacky way to preserve the original class name
+        self.__class__ = type(class_name, (HookedModule,), {'__module__': self.__class__.__module__})
+
+    def __getattr__(self, name: str) -> Any:
+        '''
+        Delegate attribute access to the wrapped module if the attribute
+        is not found in the HookedModule.
+        '''
+        if name in self.__dict__:
+            return self.__dict__[name]
+        if name in self._modules:
+            return self._modules[name]
+        if 'model' in self.__dict__:
+            return getattr(self.__dict__['model'], name)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    
+        
     def unwrap(self) -> T:
-        def recursive_unwrap(module, prefix=''):
+        def recursive_unwrap(module : nn.Module, prefix=''):
             for name, param in module.named_parameters(recurse=False):
-                full_name = f"{prefix}.{name}" if prefix else name
                 if isinstance(param, HookedParameter):
                     setattr(module, name, param.unwrap())
             
             for name, child in module.named_children():
                 recursive_unwrap(child, f"{prefix}.{name}" if prefix else name)
 
-        recursive_unwrap(self.model)
+        recursive_unwrap(self.model) # we only need to wrap parameters 
+        self.model._modules = {k: v for k, v in self.model._modules.items() if not isinstance(v, HookPoint)}
         return self.model
         
     def setup(self):
@@ -242,20 +263,19 @@ class HookedModule(HookedRootModule, Generic[T]):
         self.maybe_hook_params(self.model, '')
         
         for name, module in self.model.named_modules():
-            print("name", name)
-            if name in  [""]:
+            if name == "":
                 continue
             
             if isinstance(module, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
                 continue #no need to hook container modules
             
-            name = slice_name(name)
             hook_name = f'{name}.hook_point'
             hook_point = HookPoint()
             hook_point.name = hook_name  # type: ignore
 
-            module.register_forward_hook(forward_hook_factory(hook_point))
-            module.register_backward_hook(backward_hook_factory(hook_point))
+            module.register_forward_hook(hook_factory(hook_point))
+            #bwd hook does not appear to be needed
+            #module.register_backward_hook(backward_hook_factory(hook_point))
 
             self.hook_dict[hook_name] = hook_point
             self.mod_dict[hook_name] = hook_point
@@ -275,17 +295,12 @@ class HookedModule(HookedRootModule, Generic[T]):
     def forward(self, *args: Any, **kwargs: Any):
         return self.hook_point(self.model.forward(*args, **kwargs))
     
-def forward_hook_factory(hook_point: HookPoint):
-    def forward_hook_fn(module: Any, input: Any, output: Any) -> Any:
+def hook_factory(hook_point: HookPoint):
+    def hook_fn(module: Any, input: Any, output: Any) -> Any:
         if isinstance(output, torch.Tensor):
             return hook_point(output)
         elif isinstance(output, tuple) and isinstance(output[0], torch.Tensor):
             return (hook_point(output[0]), *output[1:])
         else:
             return output
-    return forward_hook_fn
-
-def backward_hook_factory(hook_point: HookPoint):
-    def backward_hook_fn(module: Any, grad_input: Any, grad_output: Any) -> Any:
-        hook_point(grad_output)
-    return backward_hook_fn
+    return hook_fn

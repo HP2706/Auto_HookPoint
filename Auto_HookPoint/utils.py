@@ -3,11 +3,6 @@ from torch import nn
 from typing import Iterable, Tuple
 import torch
 
-def slice_name(name:str):
-    '''removes the starting model. from str if there'''
-    if name.startswith('model.'):
-        name = name[6:]
-    return name
 
 def get_device():
     if torch.cuda.is_available():
