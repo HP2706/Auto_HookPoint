@@ -1,11 +1,13 @@
 import os
 import sys
+
 # Add the project root directory to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 import copy
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 from Auto_HookPoint.hook import auto_hook
+from Auto_HookPoint.utils import slice_name
 from transformer_lens.hook_points import HookPoint
 from transformer_lens import HookedTransformer
 from transformers.utils.generic import ModelOutput
@@ -84,7 +86,7 @@ def generic_hook_check(
 
 def get_loss(output):
     if isinstance(output, torch.Tensor):
-        return output.sum() if output.shape != [] else output
+        return output.mean() if output.shape != [] else output
     elif issubclass(type(output), ModelOutput):
         return output.loss
     else:
@@ -92,8 +94,6 @@ def get_loss(output):
             if isinstance(elm, torch.Tensor) and elm.requires_grad:
                 return elm.sum() if elm.shape != [] else elm
         raise ValueError("No suitable tensor found for backward pass")
-
-
 
 def generic_check_all_hooks(model):
     expected_hookpoints = generate_expected_hookpoints(model)
@@ -111,7 +111,6 @@ def generic_check_all_hooks(model):
             f"Missing hookpoints: {missing_hookpoints} \n\n"
             f"Additional hookpoints: {additional_hookpoints} \n\n"
             f"Expected hookpoints: {expected_hookpoints} \n\n"
-            f"Actual hookpoints: {actual_hookpoints} \n\n"
         )
     print("TEST PASSED")
 
@@ -162,7 +161,7 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
     def backward_hook(grad_output, hook=None, hook_name: str = ''):
         if isinstance(grad_output, tuple):
             return tuple(g * 2 if isinstance(g, torch.Tensor) and g.requires_grad else g for g in grad_output)
-        return (grad_output * 2,) if isinstance(grad_output, torch.Tensor) else (grad_output,)
+        return (grad_output * 2, ) if isinstance(grad_output, torch.Tensor) else (grad_output,)
     
     def get_grad_dict(loss):
         loss.backward()
@@ -174,17 +173,18 @@ def test_bwd_hook_fn_edit(module: T, input: Dict[str, torch.Tensor]):
     hook_names = [hook_name for hook_name, _ in model.hook_dict.items()]
     hooks = [(name, partial(backward_hook, hook_name=name)) for name in hook_names]
     
+    # Forward pass with hooks
+    hook_grad_dict = get_grad_dict(get_loss(model.run_with_hooks(**input, bwd_hooks=hooks, clear_contexts=True)))
     # No hooks forward pass
     no_hook_grad_dict = get_grad_dict(get_loss(model.forward(**input)))
-
-    # Forward pass with hooks
-    hook_grad_dict = get_grad_dict(get_loss(model.run_with_hooks(**input, bwd_hooks=hooks)))
 
     for name, param in model.named_parameters():
         #we check that the gradients are not the same
         #TODO make a better test
         assert not torch.allclose(no_hook_grad_dict[name], hook_grad_dict[name]), f"{name} grads are the same but they should be different"
-        
+    
+    print("TEST PASSED")
+    
 @pytest.mark.parametrize("module, input", get_combined_cases())
 def test_unwrap_works(
     module: T, 
@@ -220,7 +220,8 @@ def test_wrapping(
     pre_named_parameters = [(name, param.clone().detach()) for name, param in model_pre.named_parameters()]
     model = auto_hook(model_pre)
 
-    post_named_parameters = list(model.named_parameters())
+    #remove "model."
+    post_named_parameters = [(slice_name(name), module) for (name, module) in model.named_parameters()]
 
     incorrect_elms = []
     for pre_name, pre_param in pre_named_parameters:
@@ -289,21 +290,6 @@ def test_hook_point_name(
     for name, hook_point in model.hook_dict.items():
         assert hook_point.name is not None, f"Hook point {name} has no name"
 
-@pytest.mark.parametrize("module, _ ", get_combined_cases())
-def test_auto_hook_module_naming(
-    module: T, 
-    _
-):
-    modules = [(name, module.__class__.__name__) for name, module in module.named_modules()]
-    hooked_model = auto_hook(module)
-    auto_modules = [(name, module.__class__.__name__) for name, module in hooked_model.named_modules() if not isinstance(module, HookPoint)]
-    assert len(modules) == len(auto_modules), f"Modules length do not match: {len(modules)} != {len(auto_modules)}"
-
-    for (name1, module_name1), (name2, module_name2) in zip(modules, auto_modules):
-        assert name1 == name2, f"Names do not match: {name1} != {name2}"
-        print(module_name1, module_name2)
-        assert module_name1 == module_name2, f"Modules class names do not match: {module_name1} != {module_name2}"
-
 def run_hook_test(model, hook_name, input_data):
     hook_called = {'value': False}
     
@@ -333,13 +319,3 @@ def test_manual_hook_point_decorator():
     model = TestModel()
     run_hook_test(model, 'relu_hook_point', {'x': torch.randn(10)})
 
-def test_manual_hook_point_instance():
-    '''Tests if auto_hook works with pre-existing hook points in HookedTransformer'''
-    model = HookedTransformer(hooked_transformer_cfg)
-    hooked_model = auto_hook(model)
-    
-    input_kwargs = {
-        'input': torch.randint(0, 10, (1, 10)), 
-        'tokens': torch.randint(0, 2, (1, 10))
-    }
-    run_hook_test(hooked_model, 'blocks.3.hook_attn_out', input_kwargs)

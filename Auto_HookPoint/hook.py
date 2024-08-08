@@ -1,10 +1,14 @@
 from __future__ import annotations
+from .utils import slice_name
 from inspect import isclass
 import warnings
 from torch import nn
 import torch
+from torch.nn.modules.module import Module
 from transformer_lens.hook_points import HookPoint, HookedRootModule
 from typing import (
+    Optional,
+    Set,
     Type,
     TypeVar, 
     Generic, 
@@ -97,7 +101,10 @@ def auto_hook(module_or_class: Type[P]) -> HookedClass[P]:...
 def auto_hook(
     module_or_class: Union[Type[T], T, Type[P], P]
 ) -> Union[
-        HookedModule[T], HookedClass[T], HookedParameter[P], HookedClass[P]
+        HookedModule[T], 
+        HookedClass[T], 
+        HookedParameter[P], 
+        HookedClass[P]
     ]:
     '''
     This function wraps either a module instance or a module class and returns a type that
@@ -134,6 +141,8 @@ class HookedParameter(nn.Parameter, Generic[P]):
     '''
     A wrapper for nn.Parameter that adds a hook point and wraps any mathematical operations performed on it
     '''
+    param: P
+    hook_point: HookPoint
     
     def __init__(self, parameter : P):
         '''
@@ -207,78 +216,76 @@ class HookedParameter(nn.Parameter, Generic[P]):
 #heavily aspired by this very clean approach. https://github.com/jbloomAus/SAELens/blob/33de7f1abe10de183ffe3ea17b51dbcb991daf37/sae_lens/load_model.py#L76
 class HookedModule(HookedRootModule, Generic[T]):
     def __init__(self, model: T):
-        super().__init__()
+        super().__init__()        
         self.model = model
         self.setup()
-
-    def wrap_module_params(self, module: nn.Module):
-        for name, param in module.named_parameters(recurse=False):
-            param = cast(nn.Parameter, param)
-            hooked_param = cast(HookedParameter, HookedParameter(param))
-            module._parameters[name] = hooked_param
-            hooked_param.hook_point.name = name
-            hook = hooked_param.hook_point
-            self.hook_dict[name] = hook
-            self.mod_dict[name] = hook
-
-    def unwrap(self) -> T:
-        '''
-        Recursively unwrap the HookedModule to get the original module.
         
-        Returns:
-            T: The original, unwrapped module.
-        '''
-        for name, submodule in list(self.model.named_children()):
-            if isinstance(submodule, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
-                unhooked_container = process_container_module(
-                    submodule,
-                    lambda m: m.unwrap() if isinstance(m, HookedModule) else m
-                )
-                setattr(self.model, name, unhooked_container)
-                self.model._modules[name] = unhooked_container
-            elif isinstance(submodule, (HookedModule, HookedParameter)):
-                unwrapped_submodule = submodule.unwrap()
-                setattr(self.model, name, unwrapped_submodule)
-                self.model._modules[name] = unwrapped_submodule
-            elif hasattr(submodule, 'hook_point'):
-                # Remove hook_point from built-in modules
-                delattr(submodule, 'hook_point')
-        # Remove HookPoint instances from _modules
-        self.model._modules = {k: v for k, v in self.model._modules.items() if not isinstance(v, HookPoint)}
+    def unwrap(self) -> T:
+        def recursive_unwrap(module, prefix=''):
+            for name, param in module.named_parameters(recurse=False):
+                full_name = f"{prefix}.{name}" if prefix else name
+                if isinstance(param, HookedParameter):
+                    setattr(module, name, param.unwrap())
+            
+            for name, child in module.named_children():
+                recursive_unwrap(child, f"{prefix}.{name}" if prefix else name)
 
-        # Remove HookPoint instances from the module itself
-        for name in list(self.model.__dict__.keys()):
-            if isinstance(getattr(self.model, name), HookPoint):
-                delattr(self.model, name)
-
+        recursive_unwrap(self.model)
         return self.model
-
+        
     def setup(self):
-        self.mod_dict = {}
-        self.hook_dict: dict[str, HookPoint] = {}
-        for name, module in self.named_modules():
-            if name == "":
+        self.hook_point = HookPoint()
+        hook_name = 'hook_point'
+        self.hook_point.name = hook_name
+        self.mod_dict = {'hook_point' : self.hook_point}
+        self.hook_dict: dict[str, HookPoint] = {'hook_point' : self.hook_point}
+        self.maybe_hook_params(self.model, '')
+        
+        for name, module in self.model.named_modules():
+            print("name", name)
+            if name in  [""]:
                 continue
             
+            if isinstance(module, (nn.ModuleList, nn.Sequential, nn.ModuleDict)):
+                continue #no need to hook container modules
+            
+            name = slice_name(name)
+            hook_name = f'{name}.hook_point'
             hook_point = HookPoint()
-            hook_point.name = name  # type: ignore
-            module.register_forward_hook(get_hook_fn(hook_point))
-            module.register_backward_hook(get_hook_fn(hook_point))
-            self.hook_dict[name] = hook_point
-            self.mod_dict[name] = hook_point
-            if not any(isinstance(module, built_in_module) for built_in_module in BUILT_IN_MODULES):
-                self.wrap_module_params(module) # if not a built-in module, wrap its parameters
+            hook_point.name = hook_name  # type: ignore
 
-    def forward(self, *args: Any, **kwargs: Any):
-        return self.model(*args, **kwargs)
+            module.register_forward_hook(forward_hook_factory(hook_point))
+            module.register_backward_hook(backward_hook_factory(hook_point))
+
+            self.hook_dict[hook_name] = hook_point
+            self.mod_dict[hook_name] = hook_point
+            self.maybe_hook_params(module, name)
     
-def get_hook_fn(hook_point: HookPoint):
-    def hook_fn(module: Any, input: Any, output: Any) -> Any:
+    def maybe_hook_params(self, module : nn.Module, name : str):
+        if not any(isinstance(module, built_in_module) for built_in_module in BUILT_IN_MODULES):
+            for param_name, param in module.named_parameters(recurse=False):
+                hooked_param = cast(HookedParameter, HookedParameter(param))
+                setattr(module, param_name, hooked_param)
+
+                global_name = param_name if name=='' else f'{name}.{param_name}'
+                hook_name = f'{global_name}.hook_point'
+                hooked_param.hook_point.name = hook_name
+                self.hook_dict[hook_name] = self.mod_dict[hook_name] = hooked_param.hook_point
+                
+    def forward(self, *args: Any, **kwargs: Any):
+        return self.hook_point(self.model.forward(*args, **kwargs))
+    
+def forward_hook_factory(hook_point: HookPoint):
+    def forward_hook_fn(module: Any, input: Any, output: Any) -> Any:
         if isinstance(output, torch.Tensor):
             return hook_point(output)
         elif isinstance(output, tuple) and isinstance(output[0], torch.Tensor):
             return (hook_point(output[0]), *output[1:])
         else:
-            # if this isn't a tensor, just skip the hook entirely as this will break otherwise
             return output
-    return hook_fn
+    return forward_hook_fn
+
+def backward_hook_factory(hook_point: HookPoint):
+    def backward_hook_fn(module: Any, grad_input: Any, grad_output: Any) -> Any:
+        hook_point(grad_output)
+    return backward_hook_fn

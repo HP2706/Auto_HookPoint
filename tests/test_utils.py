@@ -1,6 +1,7 @@
 from torch import nn
 from Auto_HookPoint.utils import iterate_module
 from transformer_lens.hook_points import HookPoint
+from Auto_HookPoint.utils import slice_name
 from Auto_HookPoint.hook import HookedModule, BUILT_IN_MODULES
 from typing import Union
 from collections import Counter
@@ -19,6 +20,7 @@ def generate_expected_hookpoints(model : Union[HookedModule, nn.Module],  prefix
 
     for name, module in model.named_children():
         full_name = f"{prefix}.{name}" if prefix else name
+        full_name = slice_name(full_name)
         if isinstance(module, HookPoint):
             continue
         
