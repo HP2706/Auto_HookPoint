@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Auto_HookPoint"
-version = "0.5.0"
+version = "0.6.0"
 description = "Make any model compatible with transformer_lens"
 repository = "https://github.com/HP2706/Auto_HookPoint"  
 authors = ["HP <hprjdk@gmail.com>"]
