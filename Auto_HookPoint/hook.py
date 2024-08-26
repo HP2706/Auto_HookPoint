@@ -203,6 +203,17 @@ class HookedParameter(nn.Parameter, Generic[P]):
         self.mod_dict = {'param': self.param, 'hook_point': self.hook_point}
         self.hook_dict = {'hook_point': self.hook_point}
 
+        
+    def detach(self) -> HookedParameter[P]:
+        """
+        Detach the parameter and return a new HookedParameter instance.
+        NOTE: 
+            The detach method must return the same type as the object it's called on
+            to maintain consistency with the original Parameter behavior
+        """
+        detached_param = self.param.detach()
+        return HookedParameter(detached_param)
+
     def unwrap(self) -> P:
         '''
         Unwrap the HookedParameter to get the original parameter.
